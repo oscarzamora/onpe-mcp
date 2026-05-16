@@ -1,0 +1,1182 @@
+# pyright: reportMissingImports=false
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+import re
+import unicodedata
+
+try:
+    from mcp.server.fastmcp import FastMCP
+except Exception:  # pragma: no cover
+    FastMCP = None  # type: ignore[assignment]
+
+from .config import Settings
+from .gateway import GatewayError, OnpeScraperGateway
+from .knowledge_base import get_context_notes, get_fallback_qualitative, data_tier_label
+from .onpe_api import OnpeApiClient, OnpeApiError
+from .storage import DataStore
+from .utils import (
+    configure_logging,
+    error_response,
+    extract_foreign_geo_candidates,
+    extract_mesa_prefix_claim,
+    extract_top_n,
+    find_peru_department_prefix,
+    now_ms,
+    ok_response,
+    validate_mesa_code,
+)
+
+
+settings = Settings.from_env()
+configure_logging(settings.log_level)
+logger = logging.getLogger("onpe_mcp")
+
+gateway = OnpeScraperGateway(settings)
+store = DataStore(settings.data_dir)
+onpe_api = OnpeApiClient()
+if FastMCP is None:  # pragma: no cover
+    raise RuntimeError(
+        "No se pudo importar 'mcp.server.fastmcp'. Instala dependencias con: pip install -e ."
+    )
+
+mcp = FastMCP("onpe-mcp")
+
+
+def _try_bootstrap_snapshot_on_startup() -> None:
+    if not settings.bootstrap_on_startup:
+        return
+
+    def _run_atu_manera_bootstrap(reason: str) -> None:
+        try:
+            from pathlib import Path as _Path
+
+            csv_path = _Path(settings.atu_manera_csv_path) if settings.atu_manera_csv_path else None
+            atu_result = store.bootstrap_from_atu_manera_csv(
+                csv_path,
+                id_eleccion=12,
+                force=False,
+            )
+            logger.info("atu_manera_bootstrap_result reason=%s result=%s", reason, atu_result)
+        except Exception:
+            logger.exception("Falló bootstrap ATuManera CSV al iniciar (reason=%s)", reason)
+
+    try:
+        result = store.bootstrap_from_onpescraper(
+            output_dir=settings.output_dir,
+            source_dir=settings.source_dir,
+            include_votes=settings.bootstrap_include_votes,
+            source="startup",
+            id_eleccion=10,
+            force=False,
+        )
+        logger.info("bootstrap_startup_result=%s", result)
+    except Exception:
+        logger.exception("Falló bootstrap de snapshot onpescraper al iniciar")
+
+    # ATuManera CSV bootstrap (solo si está habilitado y no hay datos suficientes)
+    if settings.atu_manera_bootstrap:
+        _run_atu_manera_bootstrap("env_enabled")
+
+    # Fallback de primer arranque: si sigue vacío, hidrata desde CSV público por defecto.
+    try:
+        if store.total_mesas_local() == 0:
+            _run_atu_manera_bootstrap("cold_start_empty_db")
+    except Exception:
+        logger.exception("Falló validación de cold start para hidratación inicial")
+
+
+_try_bootstrap_snapshot_on_startup()
+
+
+def _norm(text: str) -> str:
+    base = unicodedata.normalize("NFKD", text or "")
+    stripped = "".join(ch for ch in base if not unicodedata.combining(ch))
+    return stripped.casefold().strip()
+
+
+def _geo_query_cache_key(field: str | None, expr: str, top_n: int) -> str:
+    return f"field={field or 'any'}|expr={_norm(expr)}|top={top_n}"
+
+
+def _resolve_foreign_geo_query(query: str) -> tuple[str | None, str, list[dict[str, str]]] | None:
+    for field, expr in extract_foreign_geo_candidates(query):
+        matches = store.find_foreign_ubigeos(expr, field=field)
+        if matches:
+            return field, expr, matches
+    return None
+
+
+def _resolve_domestic_geo_query(q: str) -> tuple[str, set[str]] | None:
+    """Resuelve una geo doméstica peruana. Primero tabla ubigeo_reniec, luego prefijos por departamento."""
+    reniec_result = store.find_domestic_ubigeos_by_geo_name(q)
+    if reniec_result is not None:
+        geo_name, ubigeos = reniec_result
+        return geo_name, set(ubigeos)
+    dept_result = find_peru_department_prefix(q)
+    if dept_result is not None:
+        dept_name, dept_prefix = dept_result
+        ubigeos = set(store.find_ubigeos_by_prefix(dept_prefix))
+        return dept_name, ubigeos
+    return None
+
+
+def _coverage_verdict(coverage_pct: float) -> str:
+    if coverage_pct >= 90:
+        return "completo"
+    if coverage_pct >= 50:
+        return "parcial"
+    if coverage_pct > 0:
+        return "muestra_pequena"
+    return "sin_datos"
+
+
+def _auto_hydrate_mesas(mesa_codes: list[str], id_eleccion: int, timeout: int) -> int:
+    """Hidrata mesas faltantes desde ONPE API. Retorna cuántas se hidrataron exitosamente."""
+    hydrated = 0
+    for code in mesa_codes:
+        try:
+            data = onpe_api.get_mesa(code, id_eleccion=id_eleccion, timeout=timeout)
+            store.upsert_mesa_bundle(code, data, source="auto_hydrate", id_eleccion=id_eleccion)
+            hydrated += 1
+        except Exception:
+            logger.debug("auto_hydrate: falló mesa %s", code)
+    return hydrated
+
+
+def _build_coverage_block(
+    q_norm: str,
+    id_eleccion: int,
+    timeout: int,
+    *,
+    prefix: str | None = None,
+    ubigeos: set[str] | None = None,
+) -> dict[str, Any]:
+    """Computa cobertura, hidrata si es necesario y retorna bloque coverage completo."""
+    metrics = store.get_coverage_metrics(prefix=prefix, ubigeos=ubigeos)
+    hydrated = 0
+    if (
+        settings.auto_hydrate_on_demand
+        and metrics["total_mesas"] > 0
+        and metrics["coverage_pct"] < 90
+    ):
+        uncovered = store.get_uncovered_mesas(
+            prefix=prefix,
+            ubigeos=ubigeos,
+            limit=settings.auto_hydrate_max_mesas,
+        )
+        if uncovered:
+            hydrated = _auto_hydrate_mesas(uncovered, id_eleccion, timeout)
+            if hydrated > 0:
+                metrics = store.get_coverage_metrics(prefix=prefix, ubigeos=ubigeos)
+    verdict = _coverage_verdict(metrics["coverage_pct"])
+    return {**metrics, "verdict": verdict, "hydrated_this_call": hydrated}
+
+
+def _hydrate_missing_city_department_by_prefix(mesa_prefix: str, id_eleccion: int) -> int:
+    """Completa ciudad/departamento faltantes por ubigeo consultando ONPE y cacheando en SQLite."""
+    missing_ubigeos = store.find_ubigeos_missing_city_or_department_by_mesa_prefix(mesa_prefix, limit=50)
+    if not missing_ubigeos:
+        return 0
+
+    upserts = 0
+    for ubigeo in missing_ubigeos:
+        try:
+            location = onpe_api.resolve_location_by_ubigeo(ubigeo, id_eleccion=id_eleccion)
+            if location and store.upsert_ubigeo_location(location):
+                upserts += 1
+        except Exception:
+            logger.exception("Falló hidratación de ubicación para ubigeo=%s", ubigeo)
+    return upserts
+
+
+def _hydrate_missing_city_department_by_ubigeo_prefix(ubigeo_prefix: str, id_eleccion: int) -> int:
+    """Completa ciudad/departamento faltantes por prefijo de ubigeo (departamento)."""
+    missing_ubigeos = store.find_ubigeos_missing_city_or_department_by_ubigeo_prefix(
+        ubigeo_prefix,
+        limit=50,
+    )
+    if not missing_ubigeos:
+        return 0
+
+    upserts = 0
+    for ubigeo in missing_ubigeos:
+        try:
+            location = onpe_api.resolve_location_by_ubigeo(ubigeo, id_eleccion=id_eleccion)
+            if location and store.upsert_ubigeo_location(location):
+                upserts += 1
+        except Exception:
+            logger.exception("Falló hidratación de ubicación (prefijo ubigeo) para ubigeo=%s", ubigeo)
+    return upserts
+
+
+@mcp.tool()
+def onpe_get_mesa(
+    codigo_mesa: str,
+    id_eleccion: int = 10,
+    timeout: int = 30,
+    base_url: str | None = None,
+    force_live: bool = False,
+) -> dict[str, Any]:
+    """Consulta una mesa ONPE y devuelve cabecera, agrupaciones y votos."""
+    started_ms = now_ms()
+    try:
+        code = validate_mesa_code(codigo_mesa)
+        id_eleccion = max(1, int(id_eleccion))
+        timeout = max(1, min(int(timeout), 120))
+
+        cached = None if force_live else store.get_cached_mesa(code, settings.cache_ttl_seconds)
+        if cached is not None:
+            logger.info("tool=onpe_get_mesa codigo_mesa=%s source=cache", code)
+            return ok_response(cached, started_ms=started_ms, meta={"source": "sqlite_cache"})
+
+        data = onpe_api.get_mesa(
+            code,
+            id_eleccion=id_eleccion,
+            timeout=timeout,
+            base_url=base_url,
+        )
+        store.upsert_mesa_bundle(
+            code,
+            data,
+            source=base_url or "https://resultadoelectoral.onpe.gob.pe/presentacion-backend",
+            id_eleccion=id_eleccion,
+        )
+        mesa_data = data.get("mesa_data") or {}
+        ubigeo = str(mesa_data.get("ubigeo") or "").strip()
+        if ubigeo:
+            try:
+                location = onpe_api.resolve_location_by_ubigeo(ubigeo, id_eleccion=id_eleccion)
+                if location:
+                    store.upsert_ubigeo_location(location)
+            except Exception:
+                logger.exception("No se pudo hidratar ubicación para ubigeo=%s", ubigeo)
+        store.append_raw_event(
+            "onpe_get_mesa",
+            {
+                "codigo_mesa": code,
+                "id_eleccion": id_eleccion,
+                "found": bool(data.get("found")),
+            },
+        )
+        logger.info("tool=onpe_get_mesa codigo_mesa=%s found=%s", code, data.get("found"))
+        return ok_response(data, started_ms=started_ms, meta={"source": "onpe_live"})
+    except ValueError as exc:
+        return error_response(str(exc), started_ms=started_ms, code="VALIDATION_ERROR")
+    except GatewayError as exc:
+        return error_response(str(exc), started_ms=started_ms, code="GATEWAY_ERROR")
+    except Exception as exc:  # pragma: no cover
+        logger.exception("Error inesperado en onpe_get_mesa")
+        return error_response(str(exc), started_ms=started_ms)
+
+
+@mcp.tool()
+def onpe_get_mesas_batch(
+    codigos_mesa: list[str],
+    id_eleccion: int = 10,
+    timeout: int = 30,
+    base_url: str | None = None,
+) -> dict[str, Any]:
+    """Consulta varias mesas y devuelve resultados por item, sin abortar por errores individuales."""
+    started_ms = now_ms()
+    try:
+        if not isinstance(codigos_mesa, list) or not codigos_mesa:
+            raise ValueError("codigos_mesa debe ser una lista no vacía")
+
+        if len(codigos_mesa) > settings.max_batch_size:
+            raise ValueError(
+                f"El lote excede el máximo permitido ({settings.max_batch_size})."
+            )
+
+        id_eleccion = max(1, int(id_eleccion))
+        timeout = max(1, min(int(timeout), 120))
+
+        items: list[dict[str, Any]] = []
+        found = 0
+
+        for raw_code in codigos_mesa:
+            try:
+                code = validate_mesa_code(str(raw_code))
+                mesa = onpe_api.get_mesa(
+                    code,
+                    id_eleccion=id_eleccion,
+                    timeout=timeout,
+                    base_url=base_url,
+                )
+                if mesa.get("found"):
+                    found += 1
+                items.append({"codigo_mesa": code, "ok": True, "result": mesa, "error": None})
+            except Exception as item_exc:
+                items.append(
+                    {
+                        "codigo_mesa": str(raw_code),
+                        "ok": False,
+                        "result": None,
+                        "error": str(item_exc),
+                    }
+                )
+
+        response_data = {
+            "total": len(items),
+            "found": found,
+            "not_found": len(items) - found,
+            "items": items,
+        }
+        logger.info("tool=onpe_get_mesas_batch total=%s found=%s", len(items), found)
+        return ok_response(response_data, started_ms=started_ms)
+    except ValueError as exc:
+        return error_response(str(exc), started_ms=started_ms, code="VALIDATION_ERROR")
+    except GatewayError as exc:
+        return error_response(str(exc), started_ms=started_ms, code="GATEWAY_ERROR")
+    except Exception as exc:  # pragma: no cover
+        logger.exception("Error inesperado en onpe_get_mesas_batch")
+        return error_response(str(exc), started_ms=started_ms)
+
+
+@mcp.tool()
+def onpe_health() -> dict[str, Any]:
+    """Verifica rutas críticas e importación del backend scraper."""
+    started_ms = now_ms()
+    try:
+        scraper_root = settings.scraper_root
+        source_dir = settings.source_dir
+        output_dir = settings.output_dir
+
+        checks = {
+            "scraper_root_exists": scraper_root.exists(),
+            "source_dir_exists": source_dir.exists(),
+            "output_dir_exists": output_dir.exists(),
+            "sqlite_db_exists": store.db_path.exists(),
+        }
+
+        import_ok = True
+        import_error = None
+        try:
+            gateway._ensure_import()
+        except Exception as exc:
+            import_ok = False
+            import_error = str(exc)
+
+        data = {
+            "status": "ok" if all(checks.values()) and import_ok else "degraded",
+            "checks": checks,
+            "import_onpe_scraper_ok": import_ok,
+            "import_onpe_scraper_error": import_error,
+            "paths": {
+                "scraper_root": str(scraper_root),
+                "source_dir": str(source_dir),
+                "output_dir": str(output_dir),
+                "data_dir": str(settings.data_dir),
+                "sqlite_db": str(store.db_path),
+            },
+            "limits": {
+                "max_batch_size": settings.max_batch_size,
+                "cache_ttl_seconds": settings.cache_ttl_seconds,
+                "geo_query_cache_ttl_seconds": settings.geo_query_cache_ttl_seconds,
+            },
+        }
+
+        return ok_response(data, started_ms=started_ms)
+    except Exception as exc:  # pragma: no cover
+        logger.exception("Error inesperado en onpe_health")
+        return error_response(str(exc), started_ms=started_ms)
+
+
+@mcp.tool()
+def onpe_sync_foreign_catalog(id_eleccion: int | None = None) -> dict[str, Any]:
+    """Sincroniza país/ciudad extranjero directamente desde API ONPE hacia SQLite."""
+    started_ms = now_ms()
+    try:
+        election_id, rows = onpe_api.build_foreign_catalog(id_eleccion)
+        upserted = store.upsert_foreign_catalog(rows)
+        store.append_raw_event(
+            "onpe_sync_foreign_catalog",
+            {
+                "id_eleccion": election_id,
+                "rows": len(rows),
+                "upserted": upserted,
+            },
+        )
+        return ok_response(
+            {
+                "id_eleccion": election_id,
+                "rows": len(rows),
+                "upserted": upserted,
+            },
+            started_ms=started_ms,
+        )
+    except OnpeApiError as exc:
+        return error_response(str(exc), started_ms=started_ms, code="ONPE_API_ERROR")
+    except Exception as exc:  # pragma: no cover
+        logger.exception("Error inesperado en onpe_sync_foreign_catalog")
+        return error_response(str(exc), started_ms=started_ms)
+
+
+@mcp.tool()
+def onpe_bootstrap_snapshot(include_votes: bool = True, force: bool = False) -> dict[str, Any]:
+    """Importa snapshot local de onpescraper hacia SQLite para acelerar consultas (sin bloquear fallback live API)."""
+    started_ms = now_ms()
+    try:
+        result = store.bootstrap_from_onpescraper(
+            output_dir=settings.output_dir,
+            source_dir=settings.source_dir,
+            include_votes=bool(include_votes),
+            source="manual_tool",
+            id_eleccion=10,
+            force=bool(force),
+        )
+        return ok_response(result, started_ms=started_ms, meta={"source": "onpescraper_snapshot"})
+    except Exception as exc:  # pragma: no cover
+        logger.exception("Error inesperado en onpe_bootstrap_snapshot")
+        return error_response(str(exc), started_ms=started_ms)
+
+
+@mcp.tool()
+def onpe_bootstrap_atu_manera(
+    csv_path: str = "",
+    force: bool = False,
+) -> dict[str, Any]:
+    """Importa las 92,766 mesas presidenciales desde el CSV público de ATuManera/Peru_elecciones2026.
+
+    Fuente: https://github.com/ATuManera/Peru_elecciones2026
+    Si csv_path está vacío, intenta descargarlo desde GitHub (requiere conexión).
+    Pasa force=true para reimportar aunque ya haya mesas en la base.
+    """
+    started_ms = now_ms()
+    try:
+        from pathlib import Path as _Path
+        resolved_path = _Path(csv_path) if csv_path else None
+        result = store.bootstrap_from_atu_manera_csv(
+            resolved_path,
+            id_eleccion=12,
+            force=bool(force),
+        )
+        return ok_response(result, started_ms=started_ms, meta={"source": "atu_manera_csv"})
+    except Exception as exc:
+        logger.exception("Error inesperado en onpe_bootstrap_atu_manera")
+        return error_response(str(exc), started_ms=started_ms)
+
+
+@mcp.tool()
+def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str, Any]:
+    """Interfaz conversacional única para consultas comunes de ONPE con estrategia cache-first.
+
+    Orden de prioridad de datos:
+      1. Cache local SQLite (datos hidratados del MCP) — siempre primero.
+      2. API ONPE en vivo — cuando el dato no está en cache.
+      3. Compendio cualitativo verificable (knowledge_base.py) — fallback pedagógico sin cifras inventadas.
+      4. Fuentes externas — indicado explícitamente cuando aplica.
+    """
+    started_ms = now_ms()
+    try:
+        q = str(query or "").strip()
+        if not q:
+            raise ValueError("query no puede estar vacía")
+
+        mesa_match = re.search(r"\b(\d{1,6})\b", q)
+        q_norm = _norm(q)
+        top_n = extract_top_n(q, default=5, minimum=1, maximum=20)
+
+        # Intención 0: legislativo (diputados/senadores) más votado por distrito
+        if "diputad" in q_norm or "senador" in q_norm:
+            cargo = "diputados" if "diputad" in q_norm else "senadores"
+            distrito_expr = q
+            match = re.search(r"\b(?:en|para)\s+(.+)$", q, flags=re.IGNORECASE)
+            if match:
+                distrito_expr = match.group(1).strip()
+
+            district = onpe_api.resolve_district(distrito_expr)
+            if district is None:
+                data = {
+                    "intent": "legislative_top_candidate",
+                    "answer": f"No encontré distrito electoral para '{distrito_expr}'.",
+                    "result": None,
+                    "source": "onpe_live",
+                }
+                return ok_response(data, started_ms=started_ms)
+
+            endpoint_candidates: list[tuple[str, int]]
+            if cargo == "diputados":
+                endpoint_candidates = [("eleccion-diputado/participantes-por-candidato", 13)]
+            else:
+                endpoint_candidates = [
+                    ("eleccion-senador-multiple/participantes-por-candidato", 14),
+                    ("eleccion-senador/participantes-por-candidato", 14),
+                ]
+
+            top_rows: list[dict[str, Any]] = []
+            chosen_endpoint: str | None = None
+            chosen_election_id: int | None = None
+            last_error: Exception | None = None
+
+            for endpoint_path, election_id in endpoint_candidates:
+                try:
+                    rows = onpe_api.get_candidates_by_district(
+                        endpoint_path=endpoint_path,
+                        id_eleccion=election_id,
+                        id_distrito_electoral=district.id_distrito_electoral,
+                        page_size=200,
+                    )
+                    if rows:
+                        top_rows = rows
+                        chosen_endpoint = endpoint_path
+                        chosen_election_id = election_id
+                        break
+                except Exception as exc:
+                    last_error = exc
+
+            if not top_rows:
+                if last_error is not None:
+                    raise OnpeApiError(str(last_error))
+                data = {
+                    "intent": "legislative_top_candidate",
+                    "answer": (
+                        f"No encontré candidatos para {cargo} en '{district.nombre}' en este momento."
+                    ),
+                    "result": None,
+                    "source": "onpe_live",
+                }
+                return ok_response(data, started_ms=started_ms)
+
+            top = top_rows[0]
+            answer = (
+                f"El {cargo[:-1]} más votado en {district.nombre} es "
+                f"{top['nombre_candidato']} ({top['nombre_agrupacion']}) con "
+                f"{top['votos_validos']} votos válidos."
+            )
+            data = {
+                "intent": "legislative_top_candidate",
+                "answer": answer,
+                "result": {
+                    "cargo": cargo,
+                    "distrito": {
+                        "id": district.id_distrito_electoral,
+                        "nombre": district.nombre,
+                    },
+                    "top_candidate": top,
+                    "top_10": top_rows[:10],
+                    "meta": {
+                        "endpoint": chosen_endpoint,
+                        "id_eleccion": chosen_election_id,
+                    },
+                },
+                "source": "onpe_live",
+            }
+            store.append_raw_event(
+                "onpe_chat_legislative_top_candidate",
+                {
+                    "query": q,
+                    "cargo": cargo,
+                    "district_id": district.id_distrito_electoral,
+                    "district_name": district.nombre,
+                    "endpoint": chosen_endpoint,
+                    "id_eleccion": chosen_election_id,
+                },
+            )
+            return ok_response(data, started_ms=started_ms)
+
+        # ── Helpers de prefijo de mesa compartidos por los siguientes bloques ──
+        _CAND_PATTERNS_SHARED = [
+            re.compile(
+                r"\b(?:fue|quedo|qued[oó]|estuvo)\s+primero\s+(.+?)(?=\s*$|\s+en\b|\s+con\b|\s+para\b|\s+sobre\b)",
+                re.IGNORECASE,
+            ),
+            re.compile(
+                r"\b(?:fue|quedo|qued[oó]|estuvo)\s+(.+?)\s+primero\b",
+                re.IGNORECASE,
+            ),
+            re.compile(
+                r"\bgan[oó]\s+(.+?)(?=\s*$|\s+en\b|\s+con\b|\s+para\b)",
+                re.IGNORECASE,
+            ),
+            re.compile(
+                r"\b(?:solo|siempre)\s+(?:gana|sale|qued[oó]|fue|queda)\s+(.+?)(?=\s*$|\s+primero\b|\s+en\b)",
+                re.IGNORECASE,
+            ),
+            re.compile(
+                r"(?:porque|ya\s+que)\s+(.+?)\s+(?:gana|sale|qued[oó]|fue)\s+primero",
+                re.IGNORECASE,
+            ),
+        ]
+
+        def _extract_candidate_expr(text: str) -> str:
+            for _pat in _CAND_PATTERNS_SHARED:
+                _m = _pat.search(text)
+                if _m:
+                    return _m.group(1).strip()
+            return ""
+
+        _has_mesa_kw = "mesa" in q_norm
+        _prefix_m = re.search(r"\b(\d{3,6})\b", q)
+        _has_prefix_num = bool(_prefix_m)
+
+        # ── Intent: verificar existencia de mesas (responder a "mesas fantasma") ──
+        _EXISTENCE_DENY_WORDS = {
+            "fantasma", "fantasm", "inventad", "no existen", "no hay", "falsa",
+            "falso", "dudosa", "ghost", "no son reales", "no son real",
+        }
+        _DESCRIBE_MESA_WORDS = {
+            "que son las", "que hay en", "donde estan", "cuantas hay", "cuantas son",
+            "informacion sobre", "que lugar", "en que lugar", "que mesas",
+        }
+        _has_existence_deny = any(w in q_norm for w in _EXISTENCE_DENY_WORDS)
+        _has_describe_mesa = any(w in q_norm for w in _DESCRIBE_MESA_WORDS)
+
+        if _has_mesa_kw and _has_prefix_num and (_has_existence_deny or _has_describe_mesa) and not (
+            "primero" in q_norm or "gano" in q_norm or "gana" in q_norm
+        ):
+            mesa_prefix = _prefix_m.group(1)  # type: ignore[union-attr]
+            coverage = _build_coverage_block(q_norm, id_eleccion, timeout, prefix=mesa_prefix)
+            description = store.describe_mesa_prefix(mesa_prefix)
+            total_mesas = int(description.get("total_mesas") or 0)
+            locations = description.get("locations") or []
+
+            context_notes = get_context_notes(q_norm, mesa_prefix)
+
+            if total_mesas == 0:
+                answer = (
+                    f"No tengo mesas con prefijo '{mesa_prefix}' en mi cache local. "
+                    "Para verificar su existencia usa onpe_get_mesas_batch con ese rango — "
+                    "las mesas son reales y figuran en el padrón oficial de ONPE."
+                )
+            else:
+                locs_str = "; ".join(
+                    f"{loc['local_votacion'] or loc['ubigeo']} ({loc['num_mesas']} mesas"
+                    + (f", {loc['votos_emitidos']} votos" if loc["votos_emitidos"] else "")
+                    + ")"
+                    for loc in locations[:5]
+                )
+                answer = (
+                    f"Las mesas con prefijo '{mesa_prefix}' SÍ existen: tengo {total_mesas} registradas. "
+                    f"Total electores hábiles: {description['total_electores_habiles']}, "
+                    f"votos emitidos: {coverage['votos_emitidos']} "
+                    f"(cobertura {coverage['coverage_pct']}% — {coverage['verdict']}). "
+                    f"Ubicaciones principales: {locs_str}."
+                )
+            if context_notes:
+                answer += " — Contexto: " + context_notes[0]
+
+            data = {
+                "intent": "range_existence_verify",
+                "answer": answer,
+                "result": {**description, "coverage": coverage, "context_notes": context_notes},
+                "source": "sqlite" if total_mesas > 0 else "sqlite_empty",
+                "data_tier": data_tier_label("sqlite" if total_mesas > 0 else "sqlite_empty"),
+            }
+            store.append_raw_event(
+                "onpe_chat_range_existence_verify",
+                {"query": q, "mesa_prefix": mesa_prefix, "total_mesas": total_mesas},
+            )
+            return ok_response(data, started_ms=started_ms)
+
+        # ── Intent: verificar claim de fraude / exclusividad ("solo X gana en mesas 900K") ──
+        _FRAUD_CLAIM_WORDS = {"fraude", "trampa", "manipulacion", "sospechoso", "sospecha", "irregular"}
+        _EXCLUSIVITY_WORDS = {"solo", "siempre", "todos", "todas", "unico", "unica"}
+
+        _has_fraud_claim = any(w in q_norm for w in _FRAUD_CLAIM_WORDS)
+        _has_exclusivity = any(w in q_norm for w in _EXCLUSIVITY_WORDS) and (
+            "primero" in q_norm or "gano" in q_norm or "gana" in q_norm
+        )
+
+        if _has_mesa_kw and _has_prefix_num and (_has_fraud_claim or _has_exclusivity):
+            mesa_prefix = _prefix_m.group(1)  # type: ignore[union-attr]
+            candidate_expr = _extract_candidate_expr(q)
+
+            coverage = _build_coverage_block(q_norm, id_eleccion, timeout, prefix=mesa_prefix)
+            ranking_data = store.all_first_places_by_prefix(mesa_prefix)
+            total_mesas = int(ranking_data.get("total_mesas") or 0)
+            mesas_con_votos = int(ranking_data.get("mesas_con_votos") or 0)
+            ranking = ranking_data.get("ranking") or []
+
+            if total_mesas == 0:
+                answer = (
+                    f"No tengo mesas con prefijo '{mesa_prefix}' en mi cache. "
+                    "Usa onpe_get_mesas_batch para hidratarlas y luego repite la consulta."
+                )
+                data = {
+                    "intent": "range_claim_verify",
+                    "answer": answer,
+                    "result": {"mesa_prefix": mesa_prefix, "is_partial": True, "ranking": []},
+                    "source": "sqlite_empty",
+                    "data_tier": "tier_3_knowledge_base",
+                }
+                store.append_raw_event("onpe_chat_range_claim_verify", {"query": q, "mesa_prefix": mesa_prefix})
+                return ok_response(data, started_ms=started_ms)
+
+            top5_str = "; ".join(
+                f"{r['nombre_partido']} en {r['mesas_primero']} mesas"
+                for r in ranking[:5]
+            )
+
+            claimed_mesas = 0
+            claimed_rank = None
+            if candidate_expr:
+                candidate_map = store.load_candidate_map(settings.source_dir / "candidato.txt")
+                expr_norm = _norm(candidate_expr)
+                for idx, item in enumerate(ranking, start=1):
+                    pid = item["partido_id"]
+                    cand = candidate_map.get(pid, "")
+                    if expr_norm and (expr_norm in _norm(cand) or expr_norm in _norm(item["nombre_partido"])):
+                        claimed_mesas = item["mesas_primero"]
+                        claimed_rank = idx
+                        break
+
+            if len(ranking) <= 1 and claimed_rank == 1 and claimed_mesas == mesas_con_votos and mesas_con_votos > 0:
+                answer = (
+                    f"En mi cache ({mesas_con_votos} mesas con prefijo '{mesa_prefix}'), "
+                    f"'{candidate_expr}' sí quedó primero en todas. "
+                    "Esto no implica fraude automáticamente — puede reflejar preferencia regional. "
+                    f"Hay {total_mesas} mesas totales en ese prefijo."
+                )
+                is_refuted = False
+            elif len(ranking) > 1:
+                answer = (
+                    f"No: en las {mesas_con_votos} mesas con prefijo '{mesa_prefix}' en mi cache, "
+                    f"el primer lugar varía — {top5_str}."
+                )
+                if candidate_expr:
+                    if claimed_mesas > 0:
+                        answer += (
+                            f" '{candidate_expr}' quedó primero en {claimed_mesas} de {mesas_con_votos} mesas "
+                            f"(posición {claimed_rank} del ranking)."
+                        )
+                    else:
+                        answer += f" '{candidate_expr}' no aparece ganando ninguna mesa en ese rango en mi cache."
+                is_refuted = True
+            else:
+                answer = (
+                    f"En mi cache ({mesas_con_votos} mesas con prefijo '{mesa_prefix}'): {top5_str}."
+                )
+                is_refuted = False
+
+            context_notes = get_context_notes(q_norm, mesa_prefix)
+            if context_notes:
+                answer += " — " + context_notes[0]
+
+            data = {
+                "intent": "range_claim_verify",
+                "answer": answer,
+                "result": {
+                    "mesa_prefix": mesa_prefix,
+                    "claimed_candidate": candidate_expr,
+                    "claimed_mesas_primero": claimed_mesas,
+                    "claimed_rank": claimed_rank,
+                    "total_mesas": total_mesas,
+                    "mesas_con_votos": mesas_con_votos,
+                    "ranking": ranking,
+                    "is_refuted": is_refuted,
+                    "is_partial": mesas_con_votos == 0,
+                    "context_notes": context_notes,
+                    "coverage": coverage,
+                },
+                "source": "sqlite",
+                "data_tier": "tier_1_local_cache",
+            }
+            store.append_raw_event(
+                "onpe_chat_range_claim_verify",
+                {
+                    "query": q,
+                    "mesa_prefix": mesa_prefix,
+                    "candidate": candidate_expr,
+                    "is_refuted": is_refuted,
+                },
+            )
+            return ok_response(data, started_ms=started_ms)
+
+        # Intención especial: razonamiento por prefijo de mesas + candidato que quedó primero
+        # Trigger: "mesa" + indicador de rango + indicador de desempeño.
+        # gano = ganó normalizado (NFD strip).
+        _RANGE_INDICATOR_WORDS = {
+            "arranc", "empiez", "prefij", "comienz", "comenz", "inicia", "partir",
+        }
+        _has_mesa = "mesa" in q_norm
+        _has_range = any(w in q_norm for w in _RANGE_INDICATOR_WORDS)
+        _has_performance = "primero" in q_norm or "primer " in q_norm or "gano" in q_norm
+        if _has_mesa and _has_range and _has_performance:
+            mesa_prefix = extract_mesa_prefix_claim(q)
+            if not mesa_prefix:
+                data = {
+                    "intent": "range_reasoning",
+                    "answer": (
+                        "Para analizar por rango de mesas necesito el prefijo numérico. "
+                        "¿Cuál es? Ejemplo: '900000', '9001' o '900K'."
+                    ),
+                    "result": None,
+                    "source": "clarification_needed",
+                }
+                return ok_response(data, started_ms=started_ms)
+
+            # Extraer nombre del candidato con patrones en orden de prioridad.
+            # 1. "fue/quedó primero NOMBRE"  (ej: "fue primero López Aliaga")
+            # 2. "fue/quedó NOMBRE primero"  (ej: "fue López Aliaga primero")
+            # 3. "ganó/gano NOMBRE"          (ej: "ganó López Aliaga")
+            candidate_expr = ""
+            _cand_patterns = [
+                re.compile(
+                    r"\b(?:fue|quedo|qued[oó]|estuvo)\s+primero\s+(.+?)(?=\s*$|\s+en\b|\s+con\b|\s+para\b|\s+sobre\b)",
+                    re.IGNORECASE,
+                ),
+                re.compile(
+                    r"\b(?:fue|quedo|qued[oó]|estuvo)\s+(.+?)\s+primero\b",
+                    re.IGNORECASE,
+                ),
+                re.compile(
+                    r"\bgan[oó]\s+(.+?)(?=\s*$|\s+en\b|\s+con\b|\s+para\b)",
+                    re.IGNORECASE,
+                ),
+            ]
+            for pat in _cand_patterns:
+                m = pat.search(q)
+                if m:
+                    candidate_expr = m.group(1).strip()
+                    break
+
+            if not candidate_expr:
+                data = {
+                    "intent": "range_reasoning",
+                    "answer": (
+                        f"Encontré el prefijo de mesa '{mesa_prefix}' pero no identifiqué el candidato. "
+                        "¿A quién te refieres? Ejemplo: 'fue primero López Aliaga'."
+                    ),
+                    "result": {"mesa_prefix": mesa_prefix},
+                    "source": "clarification_needed",
+                }
+                return ok_response(data, started_ms=started_ms)
+
+            candidate_map = store.load_candidate_map(settings.source_dir / "candidato.txt")
+            aggregates = store.aggregate_votes_by_party()
+            expr_norm = _norm(candidate_expr)
+
+            matched_partidos: set[str] = set()
+            for item in aggregates:
+                partido_id = str(item.get("partido_id") or "")
+                if not partido_id:
+                    continue
+                candidato = candidate_map.get(partido_id, "")
+                partido = str(item.get("nombre_partido") or "")
+                if expr_norm and (expr_norm in _norm(candidato) or expr_norm in _norm(partido)):
+                    matched_partidos.add(partido_id)
+
+            if not matched_partidos:
+                data = {
+                    "intent": "range_reasoning",
+                    "answer": (
+                        f"No encontré a '{candidate_expr}' en los candidatos/partidos con votos en SQLite. "
+                        "Verifica el nombre o hidrata el cache con onpe_get_mesas_batch primero."
+                    ),
+                    "result": {"mesa_prefix": mesa_prefix, "candidate": candidate_expr},
+                    "source": "sqlite",
+                }
+                return ok_response(data, started_ms=started_ms)
+
+            analysis = store.candidate_first_places_by_mesa_prefix(
+                mesa_prefix=mesa_prefix,
+                partido_ids=matched_partidos,
+                top_n=top_n,
+            )
+
+            hydrated = _hydrate_missing_city_department_by_prefix(mesa_prefix, id_eleccion)
+            if hydrated > 0:
+                analysis = store.candidate_first_places_by_mesa_prefix(
+                    mesa_prefix=mesa_prefix,
+                    partido_ids=matched_partidos,
+                    top_n=top_n,
+                )
+
+            lugares = analysis.get("lugares") or []
+            total_mesas_prefijo = int(analysis.get("total_mesas_prefijo") or 0)
+            mesas_con_votos = int(analysis.get("mesas_con_votos") or 0)
+            mesas_primero = int(analysis.get("mesas_primero") or 0)
+            is_partial = total_mesas_prefijo == 0 or mesas_con_votos == 0
+
+            answer = (
+                f"Para el prefijo {mesa_prefix}, '{candidate_expr}' quedó primero en {mesas_primero} mesas "
+                f"(sobre {mesas_con_votos} con votos, {total_mesas_prefijo} mesas en total)."
+            )
+            if is_partial:
+                answer += (
+                    " Resultado parcial: falta hidratar más mesas en SQLite para ese prefijo."
+                )
+
+            data = {
+                "intent": "range_reasoning",
+                "answer": answer,
+                "result": {
+                    "mesa_prefix": mesa_prefix,
+                    "candidate": candidate_expr,
+                    "matched_partido_ids": sorted(matched_partidos),
+                    "top_n": top_n,
+                    "total_mesas_prefijo": total_mesas_prefijo,
+                    "mesas_con_votos": mesas_con_votos,
+                    "mesas_primero": mesas_primero,
+                    "lugares": lugares,
+                    "is_partial": is_partial,
+                },
+                "source": "sqlite",
+            }
+            store.append_raw_event(
+                "onpe_chat_range_reasoning",
+                {
+                    "query": q,
+                    "mesa_prefix": mesa_prefix,
+                    "candidate": candidate_expr,
+                    "partidos": sorted(matched_partidos),
+                    "mesas_primero": mesas_primero,
+                    "ubigeo_location_hydrated": hydrated,
+                },
+            )
+            return ok_response(data, started_ms=started_ms)
+
+        geo_resolution = _resolve_foreign_geo_query(q)
+        sync_performed = False
+        if geo_resolution is None and settings.auto_sync_foreign_catalog_on_demand:
+            try:
+                election_id, rows = onpe_api.build_foreign_catalog(None)
+                upserted = store.upsert_foreign_catalog(rows)
+                sync_performed = upserted > 0
+                store.append_raw_event(
+                    "onpe_chat_geo_catalog_autosync",
+                    {
+                        "query": q,
+                        "id_eleccion": election_id,
+                        "rows": len(rows),
+                        "upserted": upserted,
+                    },
+                )
+                geo_resolution = _resolve_foreign_geo_query(q)
+            except Exception:
+                logger.exception("Falló auto-sync de catálogo extranjero en onpe_chat")
+
+        if geo_resolution is not None:
+            geo_field, geo_expr, catalog = geo_resolution
+            ubigeos = {row["ubigeo"] for row in catalog}
+
+            cache_key = _geo_query_cache_key(geo_field, geo_expr, top_n)
+            cached_geo = store.get_geo_query_cache(cache_key, settings.geo_query_cache_ttl_seconds)
+            if cached_geo is not None:
+                cached_geo["source"] = "sqlite_query_cache"
+                cached_geo["answer"] += " (cache de consulta)"
+                return ok_response(cached_geo, started_ms=started_ms)
+
+            aggregates = store.aggregate_votes_by_party(ubigeos)
+            top = aggregates[:top_n]
+            mesas_count = store.count_mesas_by_ubigeos(ubigeos)
+            total_votes = sum(int(item.get("total_votos", 0)) for item in aggregates)
+            is_partial = mesas_count == 0 or total_votes == 0
+            source = "sqlite"
+            coverage = _build_coverage_block(q_norm, id_eleccion, timeout, ubigeos=ubigeos)
+
+            answer = (
+                f"Para '{geo_expr}' encontré {len(ubigeos)} ubicaciones y {mesas_count} mesas en el consolidado local. "
+                f"Votos acumulados: {total_votes}."
+            )
+            if is_partial:
+                answer += (
+                    " Resultado parcial: no hay votos locales suficientes todavía para este ámbito. "
+                    "Consulta mesas ONPE (onpe_get_mesa/onpe_get_mesas_batch) para hidratar cache y acelerar siguientes consultas."
+                )
+            data = {
+                "intent": "geo",
+                "answer": answer,
+                "result": {
+                    "query": geo_expr,
+                    "field": geo_field or "any",
+                    "ubigeos_match": len(ubigeos),
+                    "mesas_match": mesas_count,
+                    "total_votos": total_votes,
+                    "top_n": top_n,
+                    "top_partidos": top,
+                    "is_partial": is_partial,
+                    "coverage": coverage,
+                },
+                "source": source,
+                "data_tier": data_tier_label(source),
+            }
+            store.upsert_geo_query_cache(cache_key, data)
+            store.append_raw_event("onpe_chat_geo", {"query": q, "ubigeos": len(ubigeos), "mesas": mesas_count})
+            return ok_response(data, started_ms=started_ms)
+
+        # Intención geo doméstica: departamento/provincia/distrito peruano (ej. "top 3 en Loreto")
+        domestic_result = _resolve_domestic_geo_query(q)
+        if domestic_result is not None:
+            dept_name, ubigeos_dept = domestic_result
+
+            cache_key = _geo_query_cache_key(None, dept_name, top_n)
+            cached_geo = store.get_geo_query_cache(cache_key, settings.geo_query_cache_ttl_seconds)
+            if cached_geo is not None:
+                cached_geo["source"] = "sqlite_query_cache"
+                cached_geo["answer"] += " (cache de consulta)"
+                return ok_response(cached_geo, started_ms=started_ms)
+
+            aggregates = store.aggregate_votes_by_party(ubigeos_dept if ubigeos_dept else None)
+            top = aggregates[:top_n]
+            mesas_count = store.count_mesas_by_ubigeos(ubigeos_dept) if ubigeos_dept else 0
+            total_votes = sum(int(item.get("total_votos", 0)) for item in aggregates)
+            is_partial = mesas_count == 0 or total_votes == 0
+            coverage = _build_coverage_block(q_norm, id_eleccion, timeout, ubigeos=ubigeos_dept if ubigeos_dept else None)
+
+            # Derive dept_prefix for backward compat in result
+            _dept_prefix_result = find_peru_department_prefix(q)
+            dept_prefix = _dept_prefix_result[1] if _dept_prefix_result else ""
+
+            answer = (
+                f"Para '{dept_name.title()}' encontré {mesas_count} mesas en el consolidado local. "
+                f"Votos acumulados: {total_votes}."
+            )
+            if is_partial:
+                answer += (
+                    " Resultado parcial: sin votos locales suficientes para este ámbito. "
+                    "Usa onpe_get_mesa o onpe_get_mesas_batch para hidratar el cache."
+                )
+            data = {
+                "intent": "geo_domestic",
+                "answer": answer,
+                "result": {
+                    "query": dept_name,
+                    "dept_prefix": dept_prefix,
+                    "ubigeos_match": len(ubigeos_dept),
+                    "mesas_match": mesas_count,
+                    "total_votos": total_votes,
+                    "top_n": top_n,
+                    "top_partidos": top,
+                    "is_partial": is_partial,
+                    "coverage": coverage,
+                },
+                "source": "sqlite",
+                "data_tier": data_tier_label("sqlite"),
+            }
+            store.upsert_geo_query_cache(cache_key, data)
+            store.append_raw_event(
+                "onpe_chat_geo_domestic",
+                {"query": q, "dept_name": dept_name, "dept_prefix": dept_prefix, "mesas": mesas_count},
+            )
+            return ok_response(data, started_ms=started_ms)
+
+        # Intención 1: candidato específico
+        if "candidato" in q_norm:
+            candidate_expr = q
+            match = re.search(r"candidato\s+(.+)$", q, flags=re.IGNORECASE)
+            if match:
+                candidate_expr = match.group(1).strip()
+
+            aggregates = store.aggregate_votes_by_party()
+            if not aggregates:
+                data = {
+                    "intent": "candidate",
+                    "answer": "Aún no tengo votos consolidados en SQLite. Consulta mesas primero (onpe_get_mesa o onpe_get_mesas_batch).",
+                    "result": None,
+                    "source": "sqlite",
+                    "data_tier": "tier_3_knowledge_base",
+                }
+                return ok_response(data, started_ms=started_ms)
+
+            candidate_map = store.load_candidate_map(settings.source_dir / "candidato.txt")
+            expr_norm = _norm(candidate_expr)
+
+            chosen: dict[str, Any] | None = None
+            for item in aggregates:
+                pid = str(item["partido_id"])
+                cand = candidate_map.get(pid, "")
+                if expr_norm.isdigit() and pid == expr_norm:
+                    chosen = {**item, "candidato": cand}
+                    break
+                if expr_norm and (expr_norm in _norm(cand) or expr_norm in _norm(str(item["nombre_partido"]))):
+                    chosen = {**item, "candidato": cand}
+                    break
+
+            if chosen is None:
+                data = {
+                    "intent": "candidate",
+                    "answer": f"No encontré coincidencia para candidato '{candidate_expr}'.",
+                    "result": {"query": candidate_expr},
+                    "source": "sqlite",
+                }
+                return ok_response(data, started_ms=started_ms)
+
+            rank = next(
+                (
+                    idx
+                    for idx, item in enumerate(aggregates, start=1)
+                    if str(item["partido_id"]) == str(chosen["partido_id"])
+                ),
+                None,
+            )
+            answer = (
+                f"Candidato {chosen.get('candidato') or 'sin mapeo'} "
+                f"(partido {chosen['partido_id']}) tiene {chosen['total_votos']} votos "
+                f"y posición {rank} en el consolidado actual."
+            )
+            data = {
+                "intent": "candidate",
+                "answer": answer,
+                "result": {**chosen, "rank": rank, "total_partidos": len(aggregates)},
+                "source": "sqlite",
+                "data_tier": "tier_1_local_cache",
+            }
+            store.append_raw_event("onpe_chat_candidate", {"query": q, "partido_id": chosen["partido_id"]})
+            return ok_response(data, started_ms=started_ms)
+
+        if mesa_match:
+            code = validate_mesa_code(mesa_match.group(1))
+            cached = store.get_cached_mesa(code, settings.cache_ttl_seconds)
+            if cached is not None:
+                data = {
+                    "intent": "mesa",
+                    "answer": f"Mesa {code}: estado {cached.get('mesa_data', {}).get('estado_acta', 'No disponible')} (cache local).",
+                    "result": cached,
+                    "source": "sqlite_cache",
+                    "data_tier": "tier_1_local_cache",
+                }
+                return ok_response(data, started_ms=started_ms)
+
+            mesa = onpe_api.get_mesa(code, id_eleccion=max(1, int(id_eleccion)), timeout=max(1, int(timeout)))
+            store.upsert_mesa_bundle(code, mesa, source="onpe_live", id_eleccion=max(1, int(id_eleccion)))
+            store.append_raw_event("onpe_chat_mesa", {"query": q, "codigo_mesa": code, "found": bool(mesa.get("found"))})
+            estado = (mesa.get("mesa_data") or {}).get("estado_acta", "No disponible")
+            data = {
+                "intent": "mesa",
+                "answer": f"Mesa {code}: estado {estado}.",
+                "result": mesa,
+                "source": "onpe_live",
+                "data_tier": "tier_2_onpe_api",
+            }
+            return ok_response(data, started_ms=started_ms)
+
+        qual_notes = get_fallback_qualitative(q_norm)
+        fallback_answer = (
+            f"No identifiqué la intención para '{q}'. "
+            "Prueba: una mesa ('mesa 012345'), un departamento ('top 3 en Loreto'), "
+            "un lugar extranjero ('resultados en Santiago'), "
+            "legislativo ('senadores en Lima' o 'diputados para Arequipa'), "
+            "o candidato ('candidato Fujimori')."
+        )
+        if qual_notes and qual_notes[0] != fallback_answer:
+            fallback_answer += " — " + qual_notes[0]
+        fallback = {
+            "intent": "unknown",
+            "answer": fallback_answer,
+            "result": {"qualitative_notes": qual_notes} if qual_notes else None,
+            "source": "knowledge_base",
+            "data_tier": "tier_3_knowledge_base",
+        }
+        return ok_response(fallback, started_ms=started_ms)
+    except ValueError as exc:
+        return error_response(str(exc), started_ms=started_ms, code="VALIDATION_ERROR")
+    except GatewayError as exc:
+        return error_response(str(exc), started_ms=started_ms, code="GATEWAY_ERROR")
+    except OnpeApiError as exc:
+        return error_response(str(exc), started_ms=started_ms, code="ONPE_API_ERROR")
+    except Exception as exc:  # pragma: no cover
+        logger.exception("Error inesperado en onpe_chat")
+        return error_response(str(exc), started_ms=started_ms)
+
+
+def main() -> None:
+    logger.info("Iniciando servidor onpe-mcp")
+    mcp.run()
+
+
+if __name__ == "__main__":
+    main()

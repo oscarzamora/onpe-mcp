@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://onpe-mcp.local/schemas/onpe.actas.buscar.mesa.response.schema.json",
+  "title": "ONPE Actas Buscar Mesa Response",
+  "type": "object",
+  "required": ["data"],
+  "properties": {
+    "success": {
+      "type": ["boolean", "null"]
+    },
+    "message": {
+      "type": ["string", "null"]
+    },
+    "data": {
+      "type": "array",
+      "items": {
+        "$ref": "./onpe.acta.min.schema.json"
+      }
+    }
+  },
+  "additionalProperties": true
+}

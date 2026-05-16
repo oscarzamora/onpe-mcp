@@ -1,0 +1,2 @@
+[console_scripts]
+onpe-mcp = onpe_mcp.server:main

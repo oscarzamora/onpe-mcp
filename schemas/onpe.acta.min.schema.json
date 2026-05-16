@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://onpe-mcp.local/schemas/onpe.acta.min.schema.json",
+  "title": "ONPE Acta Min",
+  "type": "object",
+  "required": ["idEleccion", "descripcionEstadoActa", "codigoMesa", "detalle"],
+  "properties": {
+    "idEleccion": {
+      "type": "integer"
+    },
+    "descripcionEstadoActa": {
+      "type": "string"
+    },
+    "codigoMesa": {
+      "type": "string"
+    },
+    "idUbigeo": {
+      "type": ["string", "null"]
+    },
+    "nombreLocalVotacion": {
+      "type": ["string", "null"]
+    },
+    "totalElectoresHabiles": {
+      "type": ["integer", "string", "null"]
+    },
+    "totalVotosEmitidos": {
+      "type": ["integer", "string", "null"]
+    },
+    "totalVotosValidos": {
+      "type": ["integer", "string", "null"]
+    },
+    "detalle": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "adCodigo": {
+            "type": ["string", "null"]
+          },
+          "adVotos": {
+            "type": ["integer", "string", "null"]
+          },
+          "adAgrupacionPolitica": {
+            "type": ["string", "null"]
+          },
+          "adDescripcion": {
+            "type": ["string", "null"]
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}
