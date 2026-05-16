@@ -37,6 +37,12 @@ logger = logging.getLogger("onpe_mcp")
 gateway = OnpeScraperGateway(settings)
 store = DataStore(settings.data_dir)
 onpe_api = OnpeApiClient()
+
+try:
+    gateway.ensure_ready()
+except GatewayError as exc:
+    raise RuntimeError(f"Dependencia requerida onpescraper no disponible: {exc}") from exc
+
 if FastMCP is None:  # pragma: no cover
     raise RuntimeError(
         "No se pudo importar 'mcp.server.fastmcp'. Instala dependencias con: pip install -e ."

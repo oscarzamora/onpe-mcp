@@ -8,6 +8,7 @@ from pathlib import Path
 @dataclass(frozen=True)
 class Settings:
     scraper_root: Path
+    scraper_repo_url: str
     source_dir: Path
     output_dir: Path
     data_dir: Path
@@ -32,6 +33,11 @@ class Settings:
                 str((workspace_default / ".." / "onpescraper").resolve()),
             )
         ).resolve()
+        scraper_repo_url = (
+            os.getenv("ONPE_SCRAPER_REPO_URL", "https://github.com/oscarzamora/onpeescraper")
+            .strip()
+            or "https://github.com/oscarzamora/onpeescraper"
+        )
 
         source_dir = Path(
             os.getenv("ONPE_SOURCE_DIR", str((scraper_root / "source_data").resolve()))
@@ -86,6 +92,7 @@ class Settings:
 
         return Settings(
             scraper_root=scraper_root,
+            scraper_repo_url=scraper_repo_url,
             source_dir=source_dir,
             output_dir=output_dir,
             data_dir=data_dir,

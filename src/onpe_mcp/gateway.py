@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import subprocess
 import sys
 from typing import Any
 
@@ -15,10 +17,46 @@ class OnpeScraperGateway:
         self.settings = settings
         self._extractor_cls: type | None = None
 
+    def _ensure_scraper_repo(self) -> None:
+        scraper_root = self.settings.scraper_root
+        scraper_src = scraper_root / "src"
+        if scraper_src.exists():
+            return
+
+        logger = logging.getLogger("onpe_mcp")
+
+        # Si no existe, clona automáticamente el repo requerido.
+        if not scraper_root.exists():
+            scraper_root.parent.mkdir(parents=True, exist_ok=True)
+            clone_cmd = ["git", "clone", self.settings.scraper_repo_url, str(scraper_root)]
+            proc = subprocess.run(
+                clone_cmd,
+                capture_output=True,
+                text=True,
+                timeout=300,
+                check=False,
+            )
+            if proc.returncode != 0:
+                stderr = (proc.stderr or "").strip()
+                stdout = (proc.stdout or "").strip()
+                detail = stderr or stdout or "sin detalle"
+                raise GatewayError(
+                    "No se pudo clonar onpescraper desde "
+                    f"{self.settings.scraper_repo_url}: {detail}"
+                )
+            logger.info("onpescraper clonado automáticamente en %s", scraper_root)
+
+        if not scraper_src.exists():
+            raise GatewayError(
+                "Repositorio onpescraper inválido o incompleto en "
+                f"{scraper_root}. Falta la carpeta src/."
+            )
+
     def _ensure_import(self) -> type:
         if self._extractor_cls is not None:
             return self._extractor_cls
 
+        self._ensure_scraper_repo()
         scraper_src = self.settings.scraper_root / "src"
         if not scraper_src.exists():
             raise GatewayError(f"No existe ruta de scraper: {scraper_src}")
@@ -33,6 +71,9 @@ class OnpeScraperGateway:
 
         self._extractor_cls = OnpeExtractor
         return OnpeExtractor
+
+    def ensure_ready(self) -> None:
+        self._ensure_import()
 
     def _build_extractor(
         self,

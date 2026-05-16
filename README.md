@@ -31,13 +31,15 @@ Modo API-first:
 ## Requisitos
 
 - Python 3.11+
-- Proyecto `onpescraper` disponible localmente.
+- Git disponible en PATH.
+- Proyecto `onpescraper` (si no existe localmente, el MCP lo clona automáticamente).
 
 ## Configuración
 
 Variables de entorno soportadas:
 
 - `ONPE_SCRAPER_ROOT`: ruta absoluta al proyecto `onpescraper`.
+- `ONPE_SCRAPER_REPO_URL`: URL del repositorio a clonar cuando `ONPE_SCRAPER_ROOT` no existe (default: `https://github.com/oscarzamora/onpeescraper`).
 - `ONPE_SOURCE_DIR`: ruta de `source_data` (opcional; por defecto `<ONPE_SCRAPER_ROOT>/source_data`).
 - `ONPE_OUTPUT_DIR`: ruta de `output` (opcional; por defecto `<ONPE_SCRAPER_ROOT>/output`).
 - `ONPE_LOG_LEVEL`: nivel de logging (`INFO`, `DEBUG`, etc.).
@@ -51,6 +53,7 @@ Variables de entorno soportadas:
 - `ONPE_ATU_MANERA_BOOTSTRAP`: ejecuta bootstrap de ATuManera al iniciar si está en `true` (default: `false`).
 
 Si no defines `ONPE_SCRAPER_ROOT`, el servidor intentará resolver `../onpescraper` desde este repo.
+Si esa ruta no existe, el servidor clona automáticamente el repo configurado y lo trata como dependencia requerida de arranque.
 
 ## Instalación
 
