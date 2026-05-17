@@ -20,7 +20,7 @@ CASES = [
     ("de las mesas que arrancan en 900000 quien fue primero Lopez Aliaga", "range_reasoning"),  # cycle27
     ("Aliaga tuvo mas votos que Sagasti en Puno",   "multi_candidate"),  # cycle30
     ("resultados del partido morado",               "candidate"),  # cycle27
-    ("elecciones 2021 en Puno",                     "geo_domestic"),  # cycle33
+    ("elecciones 2021 en Puno",                     "unknown"),  # cycle33 → year guard: 2021 ≠ 2026
     # --- Ciclo 34 regresiones ya corregidas ---
     ("quien salio en primer lugar",                 "nacional"),   # cycle34
     ("cuantos votos saco cada candidato a nivel nacional", "nacional"),  # cycle34

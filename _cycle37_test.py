@@ -13,8 +13,8 @@ CASES = [
     ("votos de Aliaga Sagasti y Fujimori",              "multi_candidate"),
     # Continent query — no specific foreign city
     ("peruanos en Europa cuantos votos",                "unknown"),
-    # 2021 results in specific geo
-    ("resultados 2021 en Arequipa",                     "geo_domestic"),
+    # 2021 results in specific geo — year guard correctly blocks non-2026 years → unknown
+    ("resultados 2021 en Arequipa",                     "unknown"),
     # "inscripcion" / registration query — non-electoral
     ("cuando fue la inscripcion de candidatos",         "nacional"),
     # Bare firstname only
