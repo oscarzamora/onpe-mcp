@@ -71,9 +71,10 @@ _CANDIDATE_VOTE_PATTERNS = [
         r"\bcu[aá]ntos?\s+votos?\s+(?:en\s+total\s+|fue\s+que\s+)?(?:tuvo|tuvieron|tubo|tubieron|sac[oó]|sacaron|tiene|tienen|obtuvo|obtuvieron|obtubo|obtubieron|gan[oó]|ganaron|logr[oó]|lograron|consigui[oó]|consiguieron|recibi[oó]|recibieron|junt[oó]|juntaron)\s+(.+?)(?:\s+(?:en|a\s+nivel|para)\b.*)?$",
         re.IGNORECASE,
     ),
-    # "cuánto sacó/obtuvo/logró/llevó/anotó/juntó X" (sin "votos") — también plural "cuántos"
+    # "cuánto sacó/obtuvo X" / "que porcentaje obtuvo X" — también plural "cuántos"
+    # acepta palabras intermedias: "cuanto porcentaje saco X", "cuantos puntos tuvo X"
     re.compile(
-        r"\bcu[aá]ntos?\s+(?:sac[oó]|obtuvo|logr[oó]|llev[oó]|anot[oó]|junt[oó]|consigui[oó]|recibi[oó]|tiene)\s+(.+?)(?:\s+(?:en|a\s+nivel|total|en\s+total)\b.*)?$",
+        r"\b(?:cu[aá]ntos?\s+(?:\w+\s+)?|qu[eé]\s+(?:porcentaje|puntaje|puntos?|lugar|posici[oó]n)\s+)(?:sac[oó]|obtuvo|logr[oó]|llev[oó]|anot[oó]|junt[oó]|consigui[oó]|recibi[oó]|tiene|tuvo)\s+(.+?)(?:\s+(?:en|a\s+nivel|total|en\s+total)\b.*)?$",
         re.IGNORECASE,
     ),
     # "votos de X" / "votos totales de X" / "número de votos de X"
@@ -85,9 +86,9 @@ _CANDIDATE_VOTE_PATTERNS = [
         r"\bn[uú]mero\s+de\s+votos?\s+de\s+(.+?)(?:\s+(?:en|a\s+nivel|total|nacional)\b.*)?$",
         re.IGNORECASE,
     ),
-    # "qué resultados tuvo/obtuvo/sacó X"
+    # "qué resultados/votos/porcentaje tuvo/obtuvo/sacó X"
     re.compile(
-        r"\bqu[eé]\s+(?:result(?:ados?|[oó])|votos?)\s+(?:tuvo|obtuvo|sac[oó])\s+(.+?)$",
+        r"\bqu[eé]\s+(?:result(?:ados?|[oó])|votos?|porcentaje|puntuaci[oó]n|puntaje|lugar|posici[oó]n)\s+(?:tuvo|obtuvo|sac[oó]|logr[oó]|consigui[oó]|recibi[oó])\s+(.+?)$",
         re.IGNORECASE,
     ),
     # "resultados de X" / "resultados nacionales de X" / "puntaje de X" / "resultados del X"
@@ -198,6 +199,7 @@ _NON_CANDIDATE_EXPRESSIONS: frozenset[str] = frozenset({
     "elecciones", "eleccion", "comicios", "sufragio",
     "congreso", "asamblea", "parlamento",
     "vuelta", "primera vuelta", "segunda vuelta",  # ej: "resultados de segunda vuelta en Piura"
+    "primera", "segunda",  # evitar captura de "segunda vuelta resultados" como candidato "segunda"
     "tanto", "ambos", "ambas",  # ej: "tanto Keiko como Aliaga"
     # Palabras geográficas que no son nombres de candidato
     "region", "departamento", "provincia", "distrito", "localidad", "municipio",
@@ -850,12 +852,15 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                 mesa_match = None
         # Normalizar puntuación especial para mejorar pattern matching
         q = re.sub(r"[¿¡:;?!]", " ", q)
+        # Normalizar símbolo % → "porcentaje" (en cualquier posición)
+        q = q.replace("%", " porcentaje ")
         q = re.sub(r"\s{2,}", " ", q).strip()
         # Eliminar muletillas verbales del inicio/fin (normalización lenguaje natural)
         q = _strip_filler(q)
-        # Eliminar frases intermedias como "fue a la segunda vuelta" que no aportan intención
+        # Eliminar "pasó a la segunda vuelta" como filler solo cuando HAY contenido después
+        # (no eliminar si es el final: "X pasó a la segunda vuelta <más texto>")
         q = re.sub(
-            r"\s+(?:fue|llego|llegó|entro|entró|pasó|paso|llega|pasa)\s+a\s+la\s+(?:primera|segunda)\s+vuelta\b",
+            r"(?<=\S)\s+(?:fue|llego|llegó|entro|entró|pasó|paso|llega|pasa)\s+a\s+la\s+(?:primera|segunda)\s+vuelta\b(?=\s+\S)",
             " ", q, flags=re.IGNORECASE
         ).strip()
         q_norm = _norm(q)
