@@ -57,7 +57,7 @@ class Settings:
         raw_bootstrap_on_startup = os.getenv("ONPE_BOOTSTRAP_ON_STARTUP", "true").strip().lower()
         raw_bootstrap_include_votes = os.getenv("ONPE_BOOTSTRAP_INCLUDE_VOTES", "true").strip().lower()
         raw_auto_hydrate = os.getenv("ONPE_AUTO_HYDRATE_ON_DEMAND", "true").strip().lower()
-        raw_auto_hydrate_max = os.getenv("ONPE_AUTO_HYDRATE_MAX_MESAS", "20").strip()
+        raw_auto_hydrate_max = os.getenv("ONPE_AUTO_HYDRATE_MAX_MESAS", "5").strip()
         raw_atu_manera_bootstrap = os.getenv("ONPE_ATU_MANERA_BOOTSTRAP", "false").strip().lower()
         atu_manera_csv_path = os.getenv("ONPE_ATU_MANERA_CSV_PATH", "").strip()
 

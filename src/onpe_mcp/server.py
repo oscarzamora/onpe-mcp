@@ -980,7 +980,7 @@ def onpe_bootstrap_atu_manera(
 
 
 @mcp.tool()
-def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str, Any]:
+def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 10) -> dict[str, Any]:
     """Interfaz conversacional única para consultas comunes de ONPE con estrategia cache-first.
 
     Orden de prioridad de datos:
@@ -988,6 +988,9 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
       2. API ONPE en vivo — cuando el dato no está en cache.
       3. Compendio cualitativo verificable (knowledge_base.py) — fallback pedagógico sin cifras inventadas.
       4. Fuentes externas — indicado explícitamente cuando aplica.
+
+    timeout: segundos máximos para llamadas a la API ONPE en vivo (default 10s).
+    Para consultas que requieren hidratación masiva usa timeout=30 explícito.
     """
     started_ms = now_ms()
     try:
@@ -2803,6 +2806,33 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             mesas_count = store.count_mesas_by_ubigeos(ubigeos_dept) if ubigeos_dept else 0
             total_votes = sum(int(item.get("total_votos", 0)) for item in aggregates)
             is_partial = mesas_count == 0 or total_votes == 0
+
+            # Respuesta rápida: si no hay datos locales, no intentar hidratación (puede demorar minutos)
+            if mesas_count == 0 and total_votes == 0:
+                _sugg_alt = [
+                    "onpe_health() — para ver estado del cache",
+                    "onpe_bootstrap_atu_manera() — para cargar las 92,766 mesas (~2 min)",
+                    f"onpe_get_mesa <codigo> — para una mesa específica en {dept_name.title()}",
+                ]
+                data = {
+                    "intent": "geo_domestic",
+                    "answer": (
+                        f"No tengo datos locales para {dept_name.title()} aún. "
+                        f"La base de datos no tiene mesas hidratadas para esta región. "
+                        f"Opciones rápidas: {' | '.join(_sugg_alt)}"
+                    ),
+                    "result": {
+                        "query": dept_name,
+                        "mesas_match": 0,
+                        "total_votos": 0,
+                        "is_partial": True,
+                        "sugerencias": _sugg_alt,
+                    },
+                    "source": "sqlite",
+                    "data_tier": "tier_3_knowledge_base",
+                }
+                return ok_response(data, started_ms=started_ms)
+
             coverage = _build_coverage_block(q_norm, id_eleccion, timeout, ubigeos=ubigeos_dept if ubigeos_dept else None)
 
             _dept_prefix_result = find_peru_department_prefix(q)
