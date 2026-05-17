@@ -2202,6 +2202,8 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "mas votados", "los mas votados", "votados", "el mas votado",
             "peruanos votaron", "peruanos que votaron", "quienes votaron", "cuantos votaron",
             "acudieron a votar", "fueron a votar", "participaron en la votacion",
+            "quien encabeza", "quien va arriba", "quien lidera el conteo",
+            "quien esta arriba", "quien salio primero", "quien quedo primero",
         }
         if _is_national and re.search(r"\b(?:en|de)\s+\w{3,}", q_norm):
             # Si la única frase nacional activa es una de tipo genérico/ranking → ceder a geo
@@ -2237,9 +2239,9 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             r"|dolar|euro|sol|libra|precio|costo|cambio|tipo)\b)\w{3,}",
             q_norm
         ) or _bare_dept_in_q
-        if not _is_national and re.search(r"\b(top\s*\d*|\d+\s+primeros?|primeros?\s+\d+)\b", q_norm) and (
-            "nacional" in q_norm or "pais" in q_norm or "peru" in q_norm
-            or ("candidatos" in q_norm and not _GEO_IN_Q)
+        if not _is_national and re.search(r"\b(top\s*\d*|\d+\s+primeros?|primeros?\s+\d+)\b", q_norm) and not _GEO_IN_Q and (
+            "nacional" in q_norm or "pais" in q_norm or re.search(r"\bperu\b", q_norm)
+            or ("candidatos" in q_norm)
         ):
             _is_national = True
         if not _is_national and re.search(r"\bm[aá]s\s+votos\b", q_norm) and "candidatos" in q_norm and not _GEO_IN_Q:
