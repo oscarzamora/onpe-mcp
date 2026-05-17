@@ -117,9 +117,9 @@ _CANDIDATE_VOTE_PATTERNS = [
         re.IGNORECASE,
     ),
     # "X cuántos votos" (order reversed) — also "X cuántos lleva/tiene/acumula"
-    # The (?:\s+...)? at the end is optional to also match bare "X cuántos" (no verb/votos)
+    # Trailing \s* makes "votos" optional at end-of-string without trailing space
     re.compile(
-        r"^(.+?)\s+cu[aá]ntos?(?:\s+(?:votos?\s+)?(?:sac[oó]|tuvo|tiene|obtuvo|lleva|acumula|sum[oó]|consigui[oó])?)?$",
+        r"^(.+?)\s+cu[aá]ntos?\s*(?:votos?\s*)?(?:sac[oó]|tuvo|tiene|obtuvo|lleva|acumula|sum[oó]|consigui[oó])?$",
         re.IGNORECASE,
     ),
     # Bare "NAME en GEO" / "NAME en GEO?" — fallback for queries sin verbo
@@ -250,6 +250,7 @@ _MULTI_CANDIDATE_PATTERN = re.compile(
     r"|\b(.+?)\s+versus\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\b(.+?)\s+vs\.?\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\bdiferencia\s+(?:de\s+votos?\s+)?entre\s+(.+?)\s+y\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
+    r"|\bentre\s+(.+?)\s+y\s+(.+?)(?:\s+(?:en|a\s+nivel|quien)\b.*)?$"
     r"|\b(.+?)\s+frente\s+a\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\b(.+?)\s+contra\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\b(.+?)\s+o\s+(.+?)\s+(?:quien|cu[aá]l|cu[aá]ntos?)\s+(?:sac[oó]|tuvo|obtuvo|tiene|tiene\s+m[aá]s|gan[oó]|logr[oó])"
@@ -813,7 +814,12 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
 
         # ── Guard: saludos y queries muy cortas ─────────────────────────────
         _GREETINGS = {"hola", "hi", "hey", "buenas", "ola", "hello", "saludos", "que tal"}
-        if q.lower().strip("¿?!.,") in _GREETINGS or len(q) < 4:
+        _PERSONAL_QUERIES = {
+            "como te llamas", "cual es tu nombre", "quien eres", "que eres",
+            "que puedes hacer", "como te llamo", "tu nombre", "como funciona",
+        }
+        _q_lower = q.lower().strip("¿?!.,")
+        if _q_lower in _GREETINGS or _q_lower in _PERSONAL_QUERIES or len(q) < 4:
             return ok_response(
                 {
                     "intent": "unknown",
@@ -934,6 +940,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         # Normalizar typos fonéticos frecuentes en español peruano (b/v, c/s)
         q = re.sub(r"\bbotos?\b", "votos", q, flags=re.IGNORECASE)  # "botos" → "votos"
         q = re.sub(r"\belecsion\b", "eleccion", q, flags=re.IGNORECASE)  # "elecsion" → "eleccion"
+        q = re.sub(r"\bme+s+a\b", "mesa", q, flags=re.IGNORECASE)  # "messa/meesa/messaa" → "mesa"
         q = re.sub(r"\s{2,}", " ", q).strip()
         # Eliminar muletillas verbales del inicio/fin (normalización lenguaje natural)
         q = _strip_filler(q)
