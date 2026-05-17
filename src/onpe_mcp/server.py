@@ -68,7 +68,7 @@ _CANDIDATE_VOTE_PATTERNS = [
     # acepta "en total", "fue que" intercalados: "cuántos votos fue que obtuvo X"
     # acepta typos b/v frecuentes en español peruano: tubo/obtubo/obtubieron
     re.compile(
-        r"\bcu[aá]ntos?\s+votos?\s+(?:en\s+total\s+|fue\s+que\s+|se\s+)?(?:tuvo|tuvieron|tubo|tubieron|sac[oó]|sacaron|tiene|tienen|obtuvo|obtuvieron|obtubo|obtubieron|gan[oó]|ganaron|logr[oó]|lograron|consigui[oó]|consiguieron|recibi[oó]|recibieron|junt[oó]|juntaron|lleva|llevan|lleba|lleban|llev[oó]|llevaron|acumula|acumulan|acumul[oó]|sum[oó]|sumaron|lleg[oó]|llegaron|alcanz[oó]|alcanzaron|adjudic[oó]|capt[oó]|captaron|hizo|hicieron|reuni[oó]|reunieron)\s+(.+?)(?:\s+(?:en|a\s+nivel|para)\b.*)?$",
+        r"\bcu[aá]ntos?\s+votos?\s+(?:en\s+total\s+|fue\s+que\s+|se\s+|hab[ií]a\s+)?(?:tuvo|tuvieron|tubo|tubieron|sac[oó]|sacaron|tiene|tienen|obtuvo|obtuvieron|obtubo|obtubieron|gan[oó]|ganaron|logr[oó]|lograron|consigui[oó]|consiguieron|recibi[oó]|recibieron|junt[oó]|juntaron|lleva|llevan|lleba|lleban|llev[oó]|llevaron|acumula|acumulan|acumul[oó]|sum[oó]|sumaron|lleg[oó]|llegaron|alcanz[oó]|alcanzaron|adjudic[oó]|capt[oó]|captaron|hizo|hicieron|reuni[oó]|reunieron|obtenido|logrado|conseguido|sacado|ganado|recibido|juntado|alcanzado|captado)\s+(.+?)(?:\s+(?:en|a\s+nivel|para)\b.*)?$",
         re.IGNORECASE,
     ),
     # "cuánto sacó/obtuvo X" / "que porcentaje obtuvo X" — también plural "cuántos"
@@ -198,6 +198,11 @@ _CANDIDATE_VOTE_PATTERNS = [
         r"\bc[oó]mo\s+(?:qued[oó]?|fue|sali[oó]|termin[oó])\s+([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,30}?)(?:\s+en\b.*)?$",
         re.IGNORECASE,
     ),
+    # "votos de/del/para NAME en GEO" — "votos de RLA en Lima"
+    re.compile(
+        r"\bvotos?\s+(?:de[l]?|para|por)\s+([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,40}?)(?:\s+(?:en|a\s+nivel)\b.*)?$",
+        re.IGNORECASE,
+    ),
 ]
 
 # Aliases culturales/coloquiales para candidatos.
@@ -289,7 +294,9 @@ _MULTI_CANDIDATE_PATTERN = re.compile(
     r"|\bcu[aá]nto\s+m[aá]s\s+(?:sac[oó]|tuvo|obtuvo|lleva|tiene)\s+(.+?)\s+que\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\bcompar[ae]\s+(.+?)\s+con\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\b(.+?)\s+m[aá]s\s+que\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
-    r"|\b(.+?)\s+y\s+(.+?)\s+(?:quien(?:es)?|cu[aá]l(?:es)?)\s+(?:van|gano|tiene|saco|obtuvo|est[aá]n?|lider[oó]|qued[oó])\b",
+    r"|\b(.+?)\s+y\s+(.+?)\s+(?:quien(?:es)?|cu[aá]l(?:es)?)\s+(?:van|gano|tiene|saco|obtuvo|est[aá]n?|lider[oó]|qued[oó])\b"
+    r"|\b(.+?)\s+y\s+(.+?)\s+comparaci[oó]n\s+(?:de\s+)?votos?\b"
+    r"|\bcomparaci[oó]n\s+(?:de\s+votos?\s+)?(?:de\s+|entre\s+)?(.+?)\s+y\s+(.+?)(?:\s*$|\s+(?:en|a\s+nivel)\b)",
     re.IGNORECASE,
 )
 
@@ -956,7 +963,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             )
 
         # Detectar preguntas de edad / características personales → unknown
-        if re.search(r"\bcu[aá]ntos?\s+a[nñ]os?\s+(?:tiene|tendr[aá]|ha|cumple|cumpli[oó])\b|\bcu[aá]nto\s+gana\b", _q_norm_guard) and not any(kw in _q_norm_guard for kw in ("voto", "votos", "eleccion", "candidato", "mesa")):
+        if re.search(r"\bcu[aá]ntos?\s+a[nñ]os?\s+(?:tiene|tienes?|tendr[aá]s?|ha|cumple|cumpli[oó])\b|\bcu[aá]nto\s+gana\b", _q_norm_guard) and not any(kw in _q_norm_guard for kw in ("voto", "votos", "eleccion", "candidato", "mesa")):
             return ok_response(
                 {
                     "intent": "unknown",
@@ -1916,7 +1923,13 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                 if not _expr_is_geo:
                     # Antes de responder "no encontrado", verificar si el nombre
                     # coincide con un país/ciudad extranjera → fallthrough a geo.
-                    _expr_foreign_chk = store.find_foreign_ubigeos(_candidate_from_pattern_early)
+                    # Omitir la búsqueda para nombres muy cortos (≤4 chars): demasiados falsos positivos
+                    # ("RLA" → ORLANDO/IRLANDA, "GV" → cualquier ciudad, etc.)
+                    _expr_foreign_chk = (
+                        store.find_foreign_ubigeos(_candidate_from_pattern_early)
+                        if len(_candidate_from_pattern_early.strip()) > 4
+                        else []
+                    )
                     if _expr_foreign_chk:
                         pass  # cae a bloques geo abajo
                     else:
@@ -2025,6 +2038,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             # conteo en tiempo real
             "quien esta arriba", "quien va arriba", "quien lidera el conteo",
             "arriba en el conteo", "lidera el conteo", "va ganando",
+            "quien salio primero", "quien quedo primero", "primer lugar",
         }
         _is_national = any(p in q_norm for p in _NATIONAL_PHRASES)
         # Departamentos peruanos conocidos — para detectar geo sin preposición ("elecciones 2026 Arequipa")
