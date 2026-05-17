@@ -1145,6 +1145,75 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             )
             return ok_response(data, started_ms=started_ms)
 
+        # ── Intent: mesa individual ─────────────────────────────────────────
+        # Se verifica ANTES que geo cuando la query contiene la palabra "mesa"
+        # explícita, para evitar que "qué pasó en la mesa 900100" sea capturado
+        # por el detector de geo ("que" → lugar extranjero).
+        if mesa_match and "mesa" in q_norm:
+            code = validate_mesa_code(mesa_match.group(1))
+
+            # Tier 1a: API cache fresco (JSON completo, máx cache_ttl_seconds)
+            cached = store.get_cached_mesa(code, settings.cache_ttl_seconds)
+            if cached is not None:
+                mesa_data = cached.get("mesa_data") or {}
+                estado = mesa_data.get("estado_acta", "No disponible")
+                votos = cached.get("votos") or []
+                top3 = [v for v in votos if v.get("votos", 0) > 0
+                        and "blanco" not in str(v.get("nombre_partido","")).lower()
+                        and "nulo" not in str(v.get("nombre_partido","")).lower()][:3]
+                top3_str = ", ".join(f"{v['nombre_partido']} {v['votos']}" for v in top3)
+                data = {
+                    "intent": "mesa",
+                    "answer": f"Mesa {code} ({mesa_data.get('local_votacion','')}, {estado}). Top candidatos: {top3_str}.",
+                    "result": cached,
+                    "source": "sqlite_cache",
+                    "data_tier": "tier_1_local_cache",
+                }
+                return ok_response(data, started_ms=started_ms)
+
+            # Tier 1b: DB local hidratada (mesas_data + votos) — sin llamada HTTP
+            local_bundle = store.get_mesa_from_local(code)
+            if local_bundle is not None:
+                mesa_data = local_bundle.get("mesa_data") or {}
+                estado = mesa_data.get("estado_acta", "No disponible")
+                votos = local_bundle.get("votos") or []
+                cand_map = store.load_candidate_map(settings.source_dir / "candidato.txt")
+                for v in votos:
+                    v["candidato"] = cand_map.get(str(v.get("partido_id", "")), "")
+                top3 = [v for v in votos if v.get("votos", 0) > 0
+                        and "blanco" not in str(v.get("nombre_partido","")).lower()
+                        and "nulo" not in str(v.get("nombre_partido","")).lower()][:3]
+                top3_str = ", ".join(
+                    f"{v.get('candidato') or v['nombre_partido']} {v['votos']}"
+                    for v in top3
+                )
+                loc = mesa_data.get("local_votacion", "")
+                dept = mesa_data.get("departamento", "")
+                loc_str = f"{loc}, {dept}" if dept else loc
+                store.append_raw_event("onpe_chat_mesa", {"query": q, "codigo_mesa": code, "source": "local_db"})
+                data = {
+                    "intent": "mesa",
+                    "answer": f"Mesa {code} ({loc_str}): {estado}. {mesa_data.get('votos_emitidos',0)} votos emitidos de {mesa_data.get('electores_habiles',0)} electores. Top: {top3_str}.",
+                    "result": local_bundle,
+                    "source": "local_db",
+                    "data_tier": "tier_1_local_cache",
+                }
+                return ok_response(data, started_ms=started_ms)
+
+            # Tier 2: Live API
+            mesa = onpe_api.get_mesa(code, id_eleccion=max(1, int(id_eleccion)), timeout=max(1, int(timeout)))
+            store.upsert_mesa_bundle(code, mesa, source="onpe_live", id_eleccion=max(1, int(id_eleccion)))
+            store.append_raw_event("onpe_chat_mesa", {"query": q, "codigo_mesa": code, "found": bool(mesa.get("found"))})
+            estado = (mesa.get("mesa_data") or {}).get("estado_acta", "No disponible")
+            data = {
+                "intent": "mesa",
+                "answer": f"Mesa {code}: estado {estado}.",
+                "result": mesa,
+                "source": "onpe_live",
+                "data_tier": "tier_2_onpe_api",
+            }
+            return ok_response(data, started_ms=started_ms)
+
         # ── Geo doméstica PRIMERO (departamento/provincia/distrito peruano) ───
         # Se verifica antes que la extranjera para evitar que Lima, Loreto, etc.
         # activen el costoso auto-sync del catálogo extranjero (700ms).
@@ -1382,9 +1451,10 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             return ok_response(data, started_ms=started_ms)
 
         if mesa_match:
+            # Fallback: número detectado sin keyword "mesa" explícita (e.g. "dame el 900100")
             code = validate_mesa_code(mesa_match.group(1))
 
-            # Tier 1a: API cache fresco (JSON completo, máx cache_ttl_seconds)
+            # Tier 1a: API cache fresco
             cached = store.get_cached_mesa(code, settings.cache_ttl_seconds)
             if cached is not None:
                 mesa_data = cached.get("mesa_data") or {}
