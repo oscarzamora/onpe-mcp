@@ -69,7 +69,7 @@ _CANDIDATE_VOTE_PATTERNS = [
     # acepta typos b/v frecuentes en español peruano: tubo/obtubo/obtubieron
     # acepta "había/habría obtenido" (pluscuamperfecto / condicional compuesto)
     re.compile(
-        r"\bcu[aá]ntos?\s+votos?\s+(?:en\s+total\s+|fue\s+que\s+|se\s+|habr?[ií]a\s+|hab[ií]a\s+)?(?:tuvo|tuvieron|tubo|tubieron|sac[oó]|sacaron|tiene|tienen|obtuvo|obtuvieron|obtubo|obtubieron|gan[oó]|ganaron|logr[oó]|lograron|consigui[oó]|consiguieron|recibi[oó]|recibieron|junt[oó]|juntaron|lleva|llevan|lleba|lleban|llev[oó]|llevaron|acumula|acumulan|acumul[oó]|sum[oó]|sumaron|lleg[oó]|llegaron|alcanz[oó]|alcanzaron|adjudic[oó]|capt[oó]|captaron|hizo|hicieron|reuni[oó]|reunieron|jal[oó]|jalaron|obtenido|logrado|conseguido|sacado|ganado|recibido|juntado|alcanzado|captado)\s+(.+?)(?:\s+(?:en|a\s+nivel|para)\b.*)?$",
+        r"\bcu[aá]ntos?\s+votos?\s+(?:en\s+total\s+|fue\s+que\s+|se\s+|habr?[ií]a\s+|hab[ií]a\s+)?(?:tuvo|tuvieron|tubo|tubieron|sac[oó]|sacaron|tiene|tienen|obtuvo|obtuvieron|obtubo|obtubieron|gan[oó]|ganaron|logr[oó]|lograron|consigui[oó]|consiguieron|recibi[oó]|recibieron|junt[oó]|juntaron|lleva|llevan|lleba|lleban|llev[oó]|llevaron|acumula|acumulan|acumul[oó]|sum[oó]|sumaron|lleg[oó]|llegaron|alcanz[oó]|alcanzaron|adjudic[oó]|adjudicados?|asign[oó]|asignados?|otorg[oó]|otorgados?|atribuy[oó]|capt[oó]|captaron|hizo|hicieron|reuni[oó]|reunieron|jal[oó]|jalaron|obtenido|logrado|conseguido|sacado|ganado|recibido|juntado|alcanzado|captado)\s+(.+?)(?:\s+(?:en|a\s+nivel|para)\b.*)?$",
         re.IGNORECASE,
     ),
     # "cuánto sacó/obtuvo X" / "que porcentaje obtuvo X" — también plural "cuántos"
@@ -102,6 +102,16 @@ _CANDIDATE_VOTE_PATTERNS = [
     # "qué resultados/votos/porcentaje tuvo/obtuvo/sacó X"
     re.compile(
         r"\bqu[eé]\s+(?:result(?:ados?|[oó])|votos?|porcentaje|puntuaci[oó]n|puntaje|lugar|posici[oó]n|tanto\s+apoyo|apoyo|respaldo)\s+(?:tuvo|obtuvo|sac[oó]|logr[oó]|consigui[oó]|recibi[oó]|alcanz[oó])\s+(.+?)$",
+        re.IGNORECASE,
+    ),
+    # "que saco/obtuvo/logro NAME" — sin palabra intermedia entre "que" y verbo
+    re.compile(
+        r"\bqu[eé]\s+(?:sac[oó]|obtuvo|logr[oó]|tuvo|consigui[oó]|recibi[oó]|alcanz[oó]|lleg[oó]|jal[oó])\s+(?:el\s+partido\s+|el\s+|la\s+)?([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,40}?)(?:\s+(?:en|a\s+nivel)\b.*)?$",
+        re.IGNORECASE,
+    ),
+    # "que tanto saco/obtuvo NAME" — "que tanto" directo sin palabra intermedia
+    re.compile(
+        r"\bqu[eé]\s+tanto\s+(?:sac[oó]|obtuvo|logr[oó]|tuvo|recibi[oó]|alcanz[oó]|consigui[oó]|lleg[oó])\s+(?:el\s+partido\s+|el\s+|la\s+)?([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,40}?)(?:\s+(?:en|a\s+nivel)\b.*)?$",
         re.IGNORECASE,
     ),
     # "que tanto apoyo/respaldo tuvo/logró X"
@@ -224,6 +234,16 @@ _CANDIDATE_VOTE_PATTERNS = [
     # "votos de/del/para NAME en GEO" — "votos de RLA en Lima"
     re.compile(
         r"\bvotos?\s+(?:de[l]?|para|por)\s+([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,40}?)(?:\s+(?:en|a\s+nivel)\b.*)?$",
+        re.IGNORECASE,
+    ),
+    # Passive voice: "votos fueron adjudicados/asignados/otorgados a NAME"
+    re.compile(
+        r"\bvotos?\s+(?:le\s+)?(?:fueron|han\s+sido|fueron\s+le)\s+(?:adjudicados?|asignados?|otorgados?|atribuidos?|dados?|entregados?)\s+a\s+([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,40}?)(?:\s+(?:en|a\s+nivel)\b.*)?$",
+        re.IGNORECASE,
+    ),
+    # "cuantos votos le fueron adjudicados/asignados a NAME"
+    re.compile(
+        r"\bcu[aá]ntos?\s+votos?\s+(?:le\s+)?(?:fueron|han\s+sido)\s+(?:adjudicados?|asignados?|otorgados?|atribuidos?|dados?)\s+a\s+([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,40}?)(?:\s+(?:en|a\s+nivel)\b.*)?$",
         re.IGNORECASE,
     ),
 ]
