@@ -134,9 +134,9 @@ _CANDIDATE_VOTE_PATTERNS = [
         r"\bvotos?\s+a\s+favor\s+de\s+([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,35}?)(?:\s+(?:en|a\s+nivel)\b.*)?$",
         re.IGNORECASE,
     ),
-    # "resultados de X" / "resultados nacionales de X" / "puntaje de X" / "resultados del X" / "resultados para X"
+    # "resultados de X" / "resultados nacionales de X" / "puntaje de X" / "resultados del X" / "resultados para X" / "porcentaje de X"
     re.compile(
-        r"\b(?:result(?:ados?|[oó])(?:\s+\w+)?\s+(?:de|del|para)|puntaje\s+(?:de|del))\s+(.+?)(?:\s+(?:en|a\s+nivel|total|nacional)\b.*)?$",
+        r"\b(?:result(?:ados?|[oó])(?:\s+\w+)?\s+(?:de|del|para)|puntaje\s+(?:de|del)|porcentaje\s+(?:de|del|que\s+obtuvo|que\s+sac[oó]))\s+(.+?)(?:\s+(?:en|a\s+nivel|total|nacional)\b.*)?$",
         re.IGNORECASE,
     ),
     # "votación de X" / "votación total de X"
@@ -925,12 +925,13 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
 
         # ── Guard: saludos y queries muy cortas ─────────────────────────────
         _GREETINGS = {"hola", "hi", "hey", "buenas", "ola", "hello", "saludos", "que tal"}
+        _GREETING_PHRASES = {"hola como estas", "hola como esta", "hola que tal", "como estas", "como esta usted", "buenos dias", "buenas noches", "buenas tardes"}
         _PERSONAL_QUERIES = {
             "como te llamas", "cual es tu nombre", "quien eres", "que eres",
             "que puedes hacer", "como te llamo", "tu nombre", "como funciona",
         }
         _q_lower = q.lower().strip("¿?!.,")
-        if _q_lower in _GREETINGS or _q_lower in _PERSONAL_QUERIES or len(q) < 4:
+        if _q_lower in _GREETINGS or _q_lower in _PERSONAL_QUERIES or _q_lower in _GREETING_PHRASES or len(q) < 4:
             return ok_response(
                 {
                     "intent": "unknown",
@@ -2315,8 +2316,10 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         if not _is_national and ("todos" in q_norm or "todas" in q_norm) and not _GEO_IN_Q:
             if "candidatos" in q_norm or "resultados" in q_norm or "votos" in q_norm or "regiones" in q_norm or "provincias" in q_norm or "pais" in q_norm:
                 _is_national = True
+        # Check simple: ¿algún departamento peruano conocido en la consulta?
+        _dept_name_in_q = any(re.search(r"\b" + re.escape(d) + r"\b", q_norm) for d in _PERU_DEPTS)
         # "candidatos/candidato" sin geo → nacional (ej: "cuántos candidatos se presentaron")
-        if not _is_national and re.search(r"\bcandidatos?\b", q_norm) and not _GEO_IN_Q:
+        if not _is_national and re.search(r"\bcandidatos?\b", q_norm) and not _GEO_IN_Q and not _dept_name_in_q:
             _is_national = True
         # "resultados de la eleccion/elecciones" sin geo específico → nacional
         if not _is_national and re.search(r"\bresultados?\s+de\s+(?:la[s]?\s+)?elecci[oó]nes?\b", q_norm) and not _GEO_IN_Q:
