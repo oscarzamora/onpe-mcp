@@ -83,7 +83,12 @@ _CANDIDATE_VOTE_PATTERNS = [
         re.IGNORECASE,
     ),
     re.compile(
-        r"\bn[uú]mero\s+de\s+votos?\s+de\s+(.+?)(?:\s+(?:en|a\s+nivel|total|nacional)\b.*)?$",
+        r"\bn[uú]mero\s+de\s+votos?\s+(?:de|que\s+(?:sac[oó]|tuvo|obtuvo|junt[oó]|logr[oó]))\s+(.+?)(?:\s+(?:en|a\s+nivel|total|nacional)\b.*)?$",
+        re.IGNORECASE,
+    ),
+    # "que numero de votos junto/obtuvo X"
+    re.compile(
+        r"\bqu[eé]\s+n[uú]mero\s+de\s+votos?\s+(?:junt[oó]|tuvo|obtuvo|sac[oó]|logr[oó]|recibi[oó]|alcanz[oó])\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$",
         re.IGNORECASE,
     ),
     # "votos en la elección de X" → candidato X
@@ -121,9 +126,19 @@ _CANDIDATE_VOTE_PATTERNS = [
         r"\b(?:qu[eé]\s+(?:lugar|posici[oó]n|puesto)\s+(?:sac[oó]|tiene|obtuvo|qued[oó])|cu[aá]l\s+(?:fue|es)\s+(?:el|la)\s+(?:lugar|posici[oó]n|puesto)\s+de)\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$",
         re.IGNORECASE,
     ),
-    # "a cuanto llegó/llego X" / "hasta cuanto llego X en el conteo"
+    # "a cuanto llegó/llego X" / "hasta cuanto llego X en el conteo" / "en cuanto quedó X"
+    re.compile(
+        r"\b(?:a|en)\s+cu[aá]nto\s+(?:lleg[oó]|qued[oó]|termin[oó]|acab[oó]|cerr[oó])\s+(.+?)(?:\s+(?:en|a\s+nivel|total|en\s+el)\b.*)?$",
+        re.IGNORECASE,
+    ),
+    # "a cuanto llego X" original (mantener compatibilidad)
     re.compile(
         r"\ba\s+cu[aá]nto(?:s|\s+votos?)?\s+lleg[oó]\s+(.+?)(?:\s+(?:en|a\s+nivel|total|en\s+el)\b.*)?$",
+        re.IGNORECASE,
+    ),
+    # "en la primera/segunda vuelta X cuantos votos" — el período precede al candidato
+    re.compile(
+        r"\ben\s+la\s+(?:primera|segunda|primera|primer)\s+vuelta\s+(.+?)\s+cu[aá]ntos?\s+votos?\s+(?:sac[oó]|tuvo|obtuvo|logr[oó]|consigui[oó])?",
         re.IGNORECASE,
     ),
     # "X cuántos votos" (order reversed) — also "X cuántos lleva/tiene/acumula"
@@ -868,6 +883,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "moneda", "cambio de moneda", "tipo de cambio",
             "mide", "pesa", "altura", "distancia", "longitud", "peso", "talla",
             "hotel", "hoteles", "restaurante", "turismo", "vuelos", "hospedaje",
+            "ingles", "frances", "idioma", "traducir", "traduccion",
         })
         # "tiempo" alone is ambiguous; only block if paired with weather words
         # "cuanto vale" = pricing query → non-electoral
@@ -910,6 +926,19 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                     "answer": (
                         "Esa pregunta parece ser biográfica o histórica, fuera del alcance electoral. "
                         "Puedo responder sobre votos, resultados o candidatos en las elecciones peruanas 2026."
+                    ),
+                },
+                started_ms=started_ms,
+            )
+
+        # Detectar preguntas de significado/definición → unknown
+        if re.search(r"\bqu[eé]\s+significa\b|\bqu[eé]\s+(?:es|son)\s+(?:la|el|los|las)\s+(?:abstenci[oó]n|padr[oó]n|sufragio|escrutinio|ballot)\b|\bcomo\s+se\s+dice\b|\bcomo\s+se\s+traduce\b", _q_norm_guard):
+            return ok_response(
+                {
+                    "intent": "unknown",
+                    "answer": (
+                        "Esa parece ser una pregunta de definición o significado, no sobre resultados electorales. "
+                        "Puedo responder sobre votos, candidatos o resultados de las elecciones peruanas 2026."
                     ),
                 },
                 started_ms=started_ms,
@@ -1038,7 +1067,8 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         if ("diputad" in q_norm or "senador" in q_norm or "congresista" in q_norm
                 or re.search(r"\besca[nñ]os?\b", q_norm)
                 or re.search(r"\brepresentantes?\b", q_norm)
-                or re.search(r"\bparlamentarios?\b", q_norm)):
+                or re.search(r"\bparlamentarios?\b", q_norm)
+                or re.search(r"\blegisladores?\b", q_norm)):
             cargo = "senadores" if ("senador" in q_norm or ("esca" in q_norm and "senador" in q_norm)) else "diputados"
             if "senador" in q_norm:
                 cargo = "senadores"
@@ -1965,6 +1995,13 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "porcentaje final", "ultimo porcentaje", "porcentaje definitivo",
             "ultimos resultados", "ultimas noticias electorales", "resultados definitivos",
             "resultados de anoche", "resultados de hoy",
+            # blancos y nulos (sin geo)
+            "blancos y nulos", "nulos y blancos", "votos invalidos y blancos",
+            # balance / balance electoral
+            "balance electoral", "balance de votos", "balance de resultados",
+            # primer lugar
+            "quien obtuvo el primer lugar", "quien quedo en primer lugar",
+            "quien ocupa el primer lugar", "primer lugar nacional",
         }
         _is_national = any(p in q_norm for p in _NATIONAL_PHRASES)
         # Departamentos peruanos conocidos — para detectar geo sin preposición ("elecciones 2026 Arequipa")
