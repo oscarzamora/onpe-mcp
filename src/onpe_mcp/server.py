@@ -945,7 +945,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             )
 
         # Detectar preguntas de edad / características personales → unknown
-        if re.search(r"\bcu[aá]ntos?\s+a[nñ]os?\s+(?:tiene|tendr[aá]|ha|cumple|cumpli[oó])\b", _q_norm_guard):
+        if re.search(r"\bcu[aá]ntos?\s+a[nñ]os?\s+(?:tiene|tendr[aá]|ha|cumple|cumpli[oó])\b|\bcu[aá]nto\s+gana\b", _q_norm_guard) and not any(kw in _q_norm_guard for kw in ("voto", "votos", "eleccion", "candidato", "mesa")):
             return ok_response(
                 {
                     "intent": "unknown",
@@ -1068,7 +1068,8 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                 or re.search(r"\besca[nñ]os?\b", q_norm)
                 or re.search(r"\brepresentantes?\b", q_norm)
                 or re.search(r"\bparlamentarios?\b", q_norm)
-                or re.search(r"\blegisladores?\b", q_norm)):
+                or re.search(r"\blegisladores?\b", q_norm)
+                or re.search(r"\bcurules?\b", q_norm)):
             cargo = "senadores" if ("senador" in q_norm or ("esca" in q_norm and "senador" in q_norm)) else "diputados"
             if "senador" in q_norm:
                 cargo = "senadores"
@@ -2002,6 +2003,9 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             # primer lugar
             "quien obtuvo el primer lugar", "quien quedo en primer lugar",
             "quien ocupa el primer lugar", "primer lugar nacional",
+            # mapa y informe
+            "mapa electoral", "informe electoral", "informe de resultados",
+            "informe de resultados electorales", "reporte final de resultados",
         }
         _is_national = any(p in q_norm for p in _NATIONAL_PHRASES)
         # Departamentos peruanos conocidos — para detectar geo sin preposición ("elecciones 2026 Arequipa")
