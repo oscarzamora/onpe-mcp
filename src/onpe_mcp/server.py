@@ -890,7 +890,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
 
         # Historical/biographical queries → unknown
         _has_historical = bool(
-            re.search(r"\b(?:antes\s+de\s+ser|antes\s+de\s+convertirse|biografia|historia\s+de|quién\s+fue\s+.+\s+antes|nació|murió|estudió)\b", _q_norm_guard)
+            re.search(r"\b(?:antes\s+de\s+ser|antes\s+de\s+convertirse|biografia|historia\s+de|quien\s+fue\s+.+\s+antes|nació|murio|estudio|se\s+fund[oó]|se\s+cre[oó]|fue\s+fundado|fue\s+creado|cuando\s+(?:se\s+)?(?:fund|cre|naci|establec))\b", _q_norm_guard)
             and not any(kw in _q_norm_guard for kw in ("voto", "votos", "eleccion", "resultado", "candidato", "mesa"))
         )
         if _has_historical:
@@ -1387,8 +1387,8 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "bloque", "grupo", "serie", "rango", "lote",
         }
         _has_mesa = "mesa" in q_norm
-        # También detectar rango numérico explícito "X a Y" (ej: "900100 a 900200")
-        _numeric_range_m = re.search(r"\b(\d{4,6})\s+a\s+\d{4,6}\b", q_norm)
+        # También detectar rango numérico explícito "X a Y" (ej: "900100 a 900200") o "entre X y Y"
+        _numeric_range_m = re.search(r"\b(\d{4,6})\s+a\s+\d{4,6}\b", q_norm) or re.search(r"\bentre\s+(\d{4,6})\s+y\s+\d{4,6}\b", q_norm)
         _has_performance = "primero" in q_norm or "primer " in q_norm or "gano" in q_norm
         # "mesas XXXX" en plural con performance → prefijo, no mesa individual
         _has_plural_mesa_prefix = bool(
@@ -1399,7 +1399,11 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             or bool(_numeric_range_m)
             or _has_plural_mesa_prefix
         )
-        if _has_mesa and _has_range and _has_performance:
+        # Explicit numeric range with "mesas" plural → range_reasoning even without performance word
+        _has_explicit_mesa_range = bool(
+            "mesas" in q_norm and _numeric_range_m
+        )
+        if _has_mesa and _has_range and (_has_performance or _has_explicit_mesa_range):
             mesa_prefix = extract_mesa_prefix_claim(q)
             if not mesa_prefix:
                 data = {
