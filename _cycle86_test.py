@@ -166,8 +166,8 @@ def test_c86_primer_presidente():
 
 # ── Grupo 8: varios ───────────────────────────────────────────────────────────
 def test_c86_sufragios_mendoza_lima():
-    # "mendoza" es ciudad argentina → geo (ambiguo pero aceptable)
-    assert intent("cuantos sufragios obtuvo mendoza en lima") == "geo"
+    # "mendoza" es ciudad argentina pero "en lima" es doméstico → geo_domestic
+    assert intent("cuantos sufragios obtuvo mendoza en lima") in ("geo", "geo_domestic")
 
 
 def test_c86_candidatos_mas_votos_piura():

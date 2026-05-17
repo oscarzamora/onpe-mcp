@@ -2742,30 +2742,49 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             _dom_name_amb, _ = _domestic_attempt
             _dom_name_in_query = _norm(_dom_name_amb) in q_norm
             if _dom_name_in_query:
-                _foreign_name_amb = next(
-                    (fp.title() for fp in sorted(_fc_geos_ext, key=len, reverse=True) if fp in q_norm),
-                    "exterior",
+                # Verificar que el nombre extranjero que disparó _has_foreign_country
+                # sea el MISMO token que el nombre doméstico (o una variante).
+                # Si el token extranjero es diferente (ej: "mendoza" dispara extranjero
+                # pero "lima" es el doméstico), el nombre en "en PLACE" ya es claro
+                # → preferir doméstico y no pedir aclaración.
+                _foreign_tok_match = next(
+                    (fp for fp in sorted(_fc_geos_ext, key=len, reverse=True) if fp in q_norm),
+                    None,
                 )
-                data = {
-                    "intent": "ambiguous",
-                    "answer": (
-                        f"Tu consulta '{q}' puede referirse a dos lugares:\n"
-                        f"  • **{_foreign_name_amb}** — peruanos votando en el exterior\n"
-                        f"  • **{_dom_name_amb.title()}** — territorio dentro del Perú\n\n"
-                        f"¿A cuál te refieres? Puedes especificar, por ejemplo: "
-                        f"'resultados de peruanos en {_foreign_name_amb}' o "
-                        f"'resultados en {_dom_name_amb.title()}, Perú'."
-                    ),
-                    "result": {
-                        "options": [
-                            {"tipo": "extranjero", "nombre": _foreign_name_amb},
-                            {"tipo": "domestico", "nombre": _dom_name_amb.title()},
-                        ]
-                    },
-                    "source": "sqlite",
-                }
-                store.append_raw_event("onpe_chat_ambiguous", {"query": q})
-                return ok_response(data, started_ms=started_ms)
+                _dom_norm_match = _norm(_dom_name_amb)
+                # Verdadera ambigüedad: el token extranjero y el nombre doméstico se solapan
+                _genuine_ambiguity = (
+                    _foreign_tok_match is not None
+                    and (
+                        _foreign_tok_match == _dom_norm_match
+                        or _dom_norm_match.startswith(_foreign_tok_match)
+                        or _foreign_tok_match.startswith(_dom_norm_match)
+                    )
+                )
+                if _genuine_ambiguity:
+                    _foreign_name_amb = _foreign_tok_match.title() if _foreign_tok_match else "exterior"
+                    data = {
+                        "intent": "ambiguous",
+                        "answer": (
+                            f"Tu consulta '{q}' puede referirse a dos lugares:\n"
+                            f"  • **{_foreign_name_amb}** — peruanos votando en el exterior\n"
+                            f"  • **{_dom_name_amb.title()}** — territorio dentro del Perú\n\n"
+                            f"¿A cuál te refieres? Puedes especificar, por ejemplo: "
+                            f"'resultados de peruanos en {_foreign_name_amb}' o "
+                            f"'resultados en {_dom_name_amb.title()}, Perú'."
+                        ),
+                        "result": {
+                            "options": [
+                                {"tipo": "extranjero", "nombre": _foreign_name_amb},
+                                {"tipo": "domestico", "nombre": _dom_name_amb.title()},
+                            ]
+                        },
+                        "source": "sqlite",
+                    }
+                    store.append_raw_event("onpe_chat_ambiguous", {"query": q})
+                    return ok_response(data, started_ms=started_ms)
+                # Token extranjero diferente al doméstico → resolver como doméstico
+                _has_foreign_country = False
             # Falso positivo doméstico — preferir extranjero
 
         domestic_result = None if _has_foreign_country else _domestic_attempt
