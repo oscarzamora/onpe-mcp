@@ -338,6 +338,10 @@ _NON_CANDIDATE_EXPRESSIONS: frozenset[str] = frozenset({
     "finales", "final", "definitivos", "definitivo", "provisorios", "provisorio",
     "parciales", "parcial", "totales", "total", "generales", "general",
     "preliminares", "preliminar", "oficiales", "oficial", "actualizados", "actualizado",
+    # Participios de conteo electoral que no son candidatos
+    "emitidos", "emitido", "computados", "computado", "contabilizados", "contabilizado",
+    "procesados", "procesado", "validos", "valido", "invalidos", "invalido",
+    "sufragados", "sufragado", "depositados", "depositado",
     # Departamentos peruanos — nunca son nombres de candidato
     "lima", "arequipa", "callao", "cusco", "cuzco", "piura", "la libertad",
     "junin", "puno", "cajamarca", "lambayeque", "loreto", "ica", "ucayali",
@@ -1004,6 +1008,11 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "primer ministro", "primer presidente",
             # Historia no-electoral
             "guerra",
+            # Demografía y geografía no-electoral
+            "habitantes", "poblacion", "pobladores", "censo",
+            "terremoto", "sismo", "tsunami", "catastrofe", "desastre",
+            # PBI/PNB (sinónimos)
+            "pbi", "pnb",
         })
         # "tiempo" alone is ambiguous; only block if paired with weather words
         # "cuanto vale/cuesta" = pricing query → non-electoral
@@ -1036,13 +1045,25 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
 
         # Historical/biographical queries → unknown
         # Preguntas geográficas administrativas (no electorales): "cuántos departamentos tiene el peru"
-        if re.search(r"\bcu[aá]ntos?\s+(?:departamentos?|provincias?|distritos?|municipios?|regiones?|ciudades?|hospitales?|cl[ií]nicas?|escuelas?|colegios?|universidades?|centros?\s+(?:de\s+salud|comerciales?|educativos?)|postas?|farmacias?|parques?|museos?|iglesias?|cementerios?)\s+(?:tiene|hay|existen?|son)\b", _q_norm_guard) and not any(kw in _q_norm_guard for kw in ("voto", "votos", "eleccion", "candidato", "mesa", "resultado")):
+        if re.search(r"\bcu[aá]ntos?\s+(?:departamentos?|provincias?|distritos?|municipios?|regiones?|ciudades?|hospitales?|cl[ií]nicas?|escuelas?|colegios?|universidades?|centros?\s+(?:de\s+salud|comerciales?|educativos?)|postas?|farmacias?|parques?|museos?|iglesias?|cementerios?|habitantes?|personas?|pobladores?)\s+(?:tiene|hay|existen?|son|viven?)\b", _q_norm_guard) and not any(kw in _q_norm_guard for kw in ("voto", "votos", "eleccion", "candidato", "mesa", "resultado")):
             return ok_response(
                 {
                     "intent": "unknown",
                     "answer": (
                         "Esa pregunta es sobre geografía administrativa, no sobre resultados electorales. "
                         "Puedo ayudarte con *'¿cuántos votos obtuvo X en Arequipa?'* o *'top 5 en Lima'*."
+                    ),
+                },
+                started_ms=started_ms,
+            )
+        # Trivial/factual geo questions: "cual es la capital de X" → non-electoral
+        if re.search(r"\bcu[aá]l\s+es\s+(?:la|el)?\s*(?:capital|idioma|moneda|bandera|himno|poblaci[oó]n|superficie|area|extension)\s+(?:de[l]?|oficial\s+de)\b", _q_norm_guard) and not any(kw in _q_norm_guard for kw in ("voto", "votos", "eleccion", "candidato", "mesa", "resultado")):
+            return ok_response(
+                {
+                    "intent": "unknown",
+                    "answer": (
+                        "Esa pregunta es sobre geografía o cultura general, no sobre resultados electorales. "
+                        "Puedo ayudarte con votos, candidatos o mesas electorales peruanas 2026."
                     ),
                 },
                 started_ms=started_ms,
@@ -2399,10 +2420,21 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         if not _is_national and not _GEO_IN_Q and not _dept_name_in_q:
             if re.search(r"\b(?:participaron|concurrieron|compitieron|se\s+presentaron)\b", q_norm):
                 _is_national = True
-            elif re.search(r"\bquien\s+qued[oó]\s+(?:en\s+)?(?:segundo|tercero|cuarto|quinto|primer|primero|último|ultimo)\b", q_norm):
+            elif re.search(r"\bquien(?:es?)?\s+qued[oó](?:\s+en)?\s+(?:segundo|tercero|cuarto|quinto|primer|primero|último|ultimo)\b", q_norm):
                 _is_national = True
             elif re.search(r"\bcual\s+(?:fue|es)\s+(?:el\s+)?resultado\b", q_norm):
                 _is_national = True
+            elif re.search(r"\bquienes?\s+(?:quedaron|terminaron|acabaron)\b", q_norm):
+                _is_national = True
+        # "quienes quedaron en el top N" — _GEO_IN_Q fires on "en el top" so handle separately
+        if not _is_national and re.search(r"\bquienes?\s+(?:quedaron?|terminaron|acabaron|lleg[ao]ron)\b", q_norm) and not _dept_name_in_q:
+            _is_national = True
+        # "como van los votos/candidatos" → nacional
+        if not _is_national and re.search(r"\bcomo\s+van\s+(?:los\s+)?(?:votos?|candidatos?|elecciones?|resultados?|las\s+elecciones?)\b", q_norm) and not _GEO_IN_Q:
+            _is_national = True
+        # "cuantos votos totales/emitidos/en total hubo" → nacional
+        if not _is_national and re.search(r"\bcu[aá]ntos?\s+votos?\s+(?:totales?|en\s+total|emitidos?|computados?|hubo|hay|fueron)\b", q_norm) and not _GEO_IN_Q and not _dept_name_in_q:
+            _is_national = True
         # "top N en Peru" / "resultados en Peru" (país entero sin dept específico) → nacional
         if not _is_national and re.search(r"\b(?:en|del?)\s+peru\b", q_norm) and not any(re.search(r"\b" + re.escape(d) + r"\b", q_norm) for d in _PERU_DEPTS):
             _is_national = True
