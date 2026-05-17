@@ -340,6 +340,7 @@ _MULTI_CANDIDATE_PATTERN = re.compile(
     r"|\bcompar[ae]\s+(.+?)\s+con\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\b(.+?)\s+m[aá]s\s+que\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\b(.+?)\s+y\s+(.+?)\s+(?:quien(?:es)?|cu[aá]l(?:es)?)\s+(?:van|gano|tiene|saco|obtuvo|est[aá]n?|lider[oó]|qued[oó])\b"
+    r"|\b(.+?)\s+y\s+(.+?)\s+quienes?\s+(?:sac[oó]|sacaron|obtuv[io]eron?|gan[oó]|ganaron|tienen?|llevan?|jalaron?)\b"
     r"|\b(.+?)\s+y\s+(.+?)\s+comparaci[oó]n\s+(?:de\s+)?votos?\b"
     r"|\bcomparaci[oó]n\s+(?:de\s+votos?\s+)?(?:de\s+|entre\s+)?(.+?)\s+y\s+(.+?)(?:\s*$|\s+(?:en|a\s+nivel)\b)",
     re.IGNORECASE,
@@ -1006,7 +1007,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             )
 
         _has_historical = bool(
-            re.search(r"\b(?:antes\s+de\s+ser|antes\s+de\s+convertirse|biografia|historia\s+de|quien\s+fue\s+.+\s+antes|nació|murio|estudio|se\s+fund[oó]|se\s+cre[oó]|fue\s+fundado|fue\s+creado|cuando\s+(?:se\s+)?(?:fund|cre|naci|establec)|primer\s+(?:presidente|mandatario|ministro)|pib\b|gdp\b|inflaci[oó]n\b|econom[ií]a\b|desempleo\b|pobreza\b)\b", _q_norm_guard)
+            re.search(r"\b(?:antes\s+de\s+ser|antes\s+de\s+convertirse|biografia|historia\s+de|quien\s+fue\s+.+\s+antes|nació|murio|estudio|se\s+fund[oó]|se\s+cre[oó]|fue\s+fundado|fue\s+creado|cuando\s+(?:se\s+)?(?:fund|cre|naci|establec)|primer\s+(?:presidente|mandatario|ministro)|pib\b|gdp\b|inflaci[oó]n\b|econom[ií]a\b|desempleo\b|pobreza\b|como\s+se\s+llama\b|cu[aá]l\s+es\s+el\s+nombre\s+de\b|cu[aá]l\s+es\s+la\s+capital\s+de\b)\b", _q_norm_guard)
             and not any(kw in _q_norm_guard for kw in ("voto", "votos", "eleccion", "resultado", "candidato", "mesa"))
         )
         if _has_historical:
@@ -2195,6 +2196,18 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "estan disponibles los resultados", "ya hay resultados",
         }
         _is_national = any(p in q_norm for p in _NATIONAL_PHRASES)
+        # Override: si frases genéricas de ranking/participación se activan pero hay geo específico
+        # → dejar que la ruta geo tome el control
+        _NATIONAL_GEO_OVERRIDE_PHRASES = {
+            "mas votados", "los mas votados", "votados", "el mas votado",
+            "peruanos votaron", "peruanos que votaron", "quienes votaron", "cuantos votaron",
+            "acudieron a votar", "fueron a votar", "participaron en la votacion",
+        }
+        if _is_national and re.search(r"\b(?:en|de)\s+\w{3,}", q_norm):
+            # Si la única frase nacional activa es una de tipo genérico/ranking → ceder a geo
+            _active_phrases = [p for p in _NATIONAL_PHRASES if p in q_norm]
+            if all(p in _NATIONAL_GEO_OVERRIDE_PHRASES for p in _active_phrases):
+                _is_national = False
         # Departamentos peruanos conocidos — para detectar geo sin preposición ("elecciones 2026 Arequipa")
         _PERU_DEPTS = {
             "lima", "arequipa", "callao", "cusco", "cuzco", "piura", "la libertad",
