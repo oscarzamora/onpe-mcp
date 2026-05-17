@@ -807,7 +807,9 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         }
         _DESCRIBE_MESA_WORDS = {
             "que son las", "que hay en", "donde estan", "cuantas hay", "cuantas son",
-            "informacion sobre", "que lugar", "en que lugar", "que mesas",
+            "cuantas existen", "son reales", "son reales", "existen realmente",
+            "existen de verdad", "cuantas mesas", "informacion sobre",
+            "que lugar", "en que lugar", "que mesas",
         }
         _has_existence_deny = any(w in q_norm for w in _EXISTENCE_DENY_WORDS)
         _has_describe_mesa = any(w in q_norm for w in _DESCRIBE_MESA_WORDS)
@@ -820,7 +822,8 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             description = store.describe_mesa_prefix(mesa_prefix)
             total_mesas = int(description.get("total_mesas") or 0)
             locations = description.get("locations") or []
-            top_candidates = store.get_top_candidates_for_prefix(mesa_prefix, top_n=5)
+            # Skip expensive candidate query when no local mesas exist for this prefix
+            top_candidates = store.get_top_candidates_for_prefix(mesa_prefix, top_n=5) if total_mesas > 0 else []
 
             context_notes = get_context_notes(q_norm, mesa_prefix)
 
