@@ -93,7 +93,12 @@ _CANDIDATE_VOTE_PATTERNS = [
     ),
     # "qué resultados/votos/porcentaje tuvo/obtuvo/sacó X"
     re.compile(
-        r"\bqu[eé]\s+(?:result(?:ados?|[oó])|votos?|porcentaje|puntuaci[oó]n|puntaje|lugar|posici[oó]n)\s+(?:tuvo|obtuvo|sac[oó]|logr[oó]|consigui[oó]|recibi[oó])\s+(.+?)$",
+        r"\bqu[eé]\s+(?:result(?:ados?|[oó])|votos?|porcentaje|puntuaci[oó]n|puntaje|lugar|posici[oó]n|tanto\s+apoyo|apoyo|respaldo)\s+(?:tuvo|obtuvo|sac[oó]|logr[oó]|consigui[oó]|recibi[oó]|alcanz[oó])\s+(.+?)$",
+        re.IGNORECASE,
+    ),
+    # "que tanto apoyo/respaldo tuvo/logró X"
+    re.compile(
+        r"\bqu[eé]\s+tanto\s+(?:apoyo|respaldo|votos?|porcentaje|aceptacion)\s+(?:tuvo|obtuvo|logr[oó]|recibi[oó]|sac[oó]|alcanz[oó])\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$",
         re.IGNORECASE,
     ),
     # "resultados de X" / "resultados nacionales de X" / "puntaje de X" / "resultados del X"
@@ -860,6 +865,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "llover", "lluvia", "lluvias", "llueve", "calor", "frio", "viento",
             "trafico", "congestion", "accidente", "noticias", "noticia",
             "moneda", "cambio de moneda", "tipo de cambio",
+            "mide", "pesa", "altura", "distancia", "longitud", "peso", "talla",
         })
         # "tiempo" alone is ambiguous; only block if paired with weather words
         # "cuanto vale" = pricing query → non-electoral
@@ -1389,8 +1395,12 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "bloque", "grupo", "serie", "rango", "lote",
         }
         _has_mesa = "mesa" in q_norm
-        # También detectar rango numérico explícito "X a Y" (ej: "900100 a 900200") o "entre X y Y"
-        _numeric_range_m = re.search(r"\b(\d{4,6})\s+a\s+\d{4,6}\b", q_norm) or re.search(r"\bentre\s+(\d{4,6})\s+y\s+\d{4,6}\b", q_norm)
+        # También detectar rango numérico explícito "X a Y" (ej: "900100 a 900200") o "entre X y Y" o "del X al Y"
+        _numeric_range_m = (
+            re.search(r"\b(\d{4,6})\s+a\s+\d{4,6}\b", q_norm)
+            or re.search(r"\bentre\s+(\d{4,6})\s+y\s+\d{4,6}\b", q_norm)
+            or re.search(r"\bdel?\s+(\d{4,6})\s+al?\s+\d{4,6}\b", q_norm)
+        )
         _has_performance = "primero" in q_norm or "primer " in q_norm or "gano" in q_norm
         # "mesas XXXX" en plural con performance → prefijo, no mesa individual
         _has_plural_mesa_prefix = bool(
@@ -1921,6 +1931,11 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             # estado del conteo
             "faltan por contar", "falta por contar", "por contabilizar",
             "estado del conteo", "avance del conteo", "actas procesadas",
+            # participación
+            "acudieron a votar", "fueron a votar", "participaron en la votacion",
+            "cuantos votaron", "quienes votaron",
+            # temporales electorales
+            "cuando fueron las elecciones", "cuando se realizaron", "fecha de las elecciones",
         }
         _is_national = any(p in q_norm for p in _NATIONAL_PHRASES)
         # Departamentos peruanos conocidos — para detectar geo sin preposición ("elecciones 2026 Arequipa")
@@ -2399,8 +2414,10 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             store.append_raw_event("onpe_chat_candidate", {"query": q, "partido_id": chosen["partido_id"]})
             return ok_response(data, started_ms=started_ms)
 
-        if mesa_match:
+        _MESA_CONTEXT_WORDS = {"mesa", "acta", "local", "votacion", "sufragio", "urna", "codigo", "dame", "ver", "consulta", "busca"}
+        if mesa_match and (any(w in q_norm for w in _MESA_CONTEXT_WORDS) or len(q_norm.split()) <= 2):
             # Fallback: número detectado sin keyword "mesa" explícita (e.g. "dame el 900100")
+            # Requiere alguna palabra de contexto O query muy corta (solo el número)
             code = validate_mesa_code(mesa_match.group(1))
 
             # Tier 1a: API cache fresco
