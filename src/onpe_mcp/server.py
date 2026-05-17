@@ -1407,7 +1407,11 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 10) -> dict[str,
             if match:
                 distrito_expr = match.group(1).strip()
 
-            district = onpe_api.resolve_district(distrito_expr)
+            district: object
+            try:
+                district = onpe_api.resolve_district(distrito_expr)
+            except Exception:
+                district = None
             if district is None:
                 data = {
                     "intent": "legislative_top_candidate",
@@ -2277,6 +2281,12 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 10) -> dict[str,
                         (_expr_norm_geo, _expr_norm_geo, _expr_norm_geo),
                     ).fetchone()
                 _expr_is_geo = _geo_chk is not None
+                # Fallback estático: check _CITY_ALIASES sin necesitar la DB (funciona en CI/vacío)
+                if not _expr_is_geo:
+                    _expr_is_geo = any(
+                        re.search(r"\b" + re.escape(k) + r"\b", _expr_norm_geo)
+                        for k in _STATIC_CITY_ALIASES
+                    )
                 if not _expr_is_geo:
                     # Antes de responder "no encontrado", verificar si el nombre
                     # coincide con un país/ciudad extranjera → fallthrough a geo.

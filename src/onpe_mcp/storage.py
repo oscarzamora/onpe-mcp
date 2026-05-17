@@ -81,6 +81,8 @@ _CITY_ALIASES: dict[str, str] = {
     "cajamarca": "cajamarca",
     "jaen": "jaen",
     # Lima — distritos urbanos frecuentes
+    "la victoria": "la victoria",
+    "buenos aires": "buenos aires",
     "miraflores": "miraflores",
     "san isidro": "san isidro",
     "lince": "lince",
