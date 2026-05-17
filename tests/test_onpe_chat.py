@@ -125,12 +125,8 @@ def test_consulta_mesa_por_numero(monkeypatch) -> None:
     monkeypatch.setattr(server_module, "_resolve_foreign_geo_query", lambda q: None)
     monkeypatch.setattr(server_module, "_resolve_domestic_geo_query", lambda q: None)
     monkeypatch.setattr(server_module.store, "get_cached_mesa", lambda code, ttl: None)
-    monkeypatch.setattr(server_module.store, "describe_mesa_prefix", lambda p, **kw: {"total_mesas": 0, "mesa_prefix": p, "total_votos_emitidos": 0, "total_electores_habiles": 0, "locations": []})
-    monkeypatch.setattr(server_module.store, "all_first_places_by_prefix", lambda p, **kw: {"total_mesas": 0, "mesa_prefix": p, "mesas_con_votos": 0, "ranking": []})
-    monkeypatch.setattr(server_module.store, "get_coverage_metrics", lambda **kw: _FAKE_COVERAGE_EMPTY)
-    monkeypatch.setattr(server_module.store, "get_uncovered_mesas", lambda **kw: [])
-
-    fake_mesa: dict[str, Any] = {
+    # Simula mesa en DB local (Tier 1b) — evita llamada al API
+    local_bundle: dict[str, Any] = {
         "codigo_mesa": "900100",
         "found": True,
         "mesa_data": {
@@ -146,10 +142,15 @@ def test_consulta_mesa_por_numero(monkeypatch) -> None:
             "estado_acta": "Contabilizada",
         },
         "agrupaciones": [],
-        "votos": [],
+        "votos": [{"partido_id": "35", "nombre_partido": "RENOVACION POPULAR", "votos": 80}],
+        "source": "local_db",
     }
-    monkeypatch.setattr(server_module.onpe_api, "get_mesa", lambda code, **kw: fake_mesa)
-    monkeypatch.setattr(server_module.store, "upsert_mesa_bundle", _noop)
+    monkeypatch.setattr(server_module.store, "get_mesa_from_local", lambda code: local_bundle)
+    monkeypatch.setattr(server_module.store, "load_candidate_map", lambda path: {"35": "RAFAEL LOPEZ ALIAGA CAZORLA"})
+    monkeypatch.setattr(server_module.store, "describe_mesa_prefix", lambda p, **kw: {"total_mesas": 0, "mesa_prefix": p, "total_votos_emitidos": 0, "total_electores_habiles": 0, "locations": []})
+    monkeypatch.setattr(server_module.store, "all_first_places_by_prefix", lambda p, **kw: {"total_mesas": 0, "mesa_prefix": p, "mesas_con_votos": 0, "ranking": []})
+    monkeypatch.setattr(server_module.store, "get_coverage_metrics", lambda **kw: _FAKE_COVERAGE_EMPTY)
+    monkeypatch.setattr(server_module.store, "get_uncovered_mesas", lambda **kw: [])
     monkeypatch.setattr(server_module.store, "append_raw_event", _noop)
 
     result = onpe_chat("consulta mesa 900100")
@@ -158,6 +159,8 @@ def test_consulta_mesa_por_numero(monkeypatch) -> None:
     assert result["data"]["intent"] == "mesa"
     assert result["data"]["result"]["codigo_mesa"] == "900100"
     assert result["data"]["result"]["found"] is True
+    assert result["data"]["source"] == "local_db"
+    assert "Contabilizada" in result["data"]["answer"]
 
 
 # ---------------------------------------------------------------------------
@@ -521,7 +524,120 @@ def test_range_existence_verify_sin_datos(monkeypatch) -> None:
     assert data["intent"] == "range_existence_verify"
     assert data["result"]["total_mesas"] == 0
     assert data["source"] == "sqlite_empty"
-    assert "onpe_get_mesas_batch" in data["answer"] or "hidratar" in data["answer"].lower()
+
+
+# ---------------------------------------------------------------------------
+# 16. Año no se interpreta como mesa: "elecciones 2021 vs 2026"
+# ---------------------------------------------------------------------------
+
+def test_año_no_interpretado_como_mesa(monkeypatch) -> None:
+    """'¿quién ganó en 2021?' no debe disparar intent=mesa — 2021 es un año, no mesa."""
+    _disable_autosync(monkeypatch)
+    monkeypatch.setattr(server_module, "_resolve_foreign_geo_query", lambda q: None)
+    monkeypatch.setattr(server_module, "_resolve_domestic_geo_query", lambda q: None)
+
+    result = onpe_chat("quien gano las elecciones en 2021")
+
+    assert result["ok"] is True
+    data = result["data"]
+    # No debe tratarse como consulta de mesa (código 2021 no es válido como mesa sin keyword "mesa")
+    assert data["intent"] != "mesa", (
+        "Una consulta con '2021' sin la palabra 'mesa' NO debe resolverse como intent=mesa"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 17. Mesa con año explícito SÍ funciona: "dame los resultados de la mesa 002021"
+# ---------------------------------------------------------------------------
+
+def test_mesa_con_numero_que_parece_año_pero_tiene_keyword(monkeypatch) -> None:
+    """'dame los resultados de la mesa 002021' SÍ debe tratarse como intent=mesa."""
+    _disable_autosync(monkeypatch)
+    monkeypatch.setattr(server_module, "_resolve_foreign_geo_query", lambda q: None)
+    monkeypatch.setattr(server_module, "_resolve_domestic_geo_query", lambda q: None)
+    monkeypatch.setattr(server_module.store, "get_cached_mesa", lambda code, ttl: None)
+    local_bundle: dict[str, Any] = {
+        "codigo_mesa": "002021",
+        "found": True,
+        "mesa_data": {
+            "codigo_mesa": "002021",
+            "ubigeo": "150101",
+            "local_votacion": "IE LIMA NORTE",
+            "electores_habiles": 180,
+            "votos_emitidos": 150,
+            "votos_validos": 145,
+            "blancos": 2,
+            "nulos": 3,
+            "impugnados": 0,
+            "estado_acta": "Contabilizada",
+        },
+        "agrupaciones": [],
+        "votos": [],
+        "source": "local_db",
+    }
+    monkeypatch.setattr(server_module.store, "get_mesa_from_local", lambda code: local_bundle)
+    monkeypatch.setattr(server_module.store, "load_candidate_map", lambda path: {})
+    monkeypatch.setattr(server_module.store, "describe_mesa_prefix", lambda p, **kw: {"total_mesas": 0, "mesa_prefix": p, "total_votos_emitidos": 0, "total_electores_habiles": 0, "locations": []})
+    monkeypatch.setattr(server_module.store, "all_first_places_by_prefix", lambda p, **kw: {"total_mesas": 0, "mesa_prefix": p, "mesas_con_votos": 0, "ranking": []})
+    monkeypatch.setattr(server_module.store, "get_coverage_metrics", lambda **kw: _FAKE_COVERAGE_EMPTY)
+    monkeypatch.setattr(server_module.store, "get_uncovered_mesas", lambda **kw: [])
+    monkeypatch.setattr(server_module.store, "append_raw_event", _noop)
+
+    result = onpe_chat("dame los resultados de la mesa 002021")
+
+    assert result["ok"] is True
+    assert result["data"]["intent"] == "mesa"
+
+
+# ---------------------------------------------------------------------------
+# 18. Senadores con endpoint no disponible → respuesta graceful (no error 500)
+# ---------------------------------------------------------------------------
+
+def test_senadores_endpoint_no_disponible_respuesta_graceful(monkeypatch) -> None:
+    """Si el endpoint de senadores devuelve HTML/falla, debe retornar respuesta útil, no excepción."""
+    from onpe_mcp.onpe_api import OnpeApiError, DistrictItem
+
+    monkeypatch.setattr(
+        server_module.onpe_api,
+        "resolve_district",
+        lambda q: DistrictItem(id_distrito_electoral=1, nombre="AREQUIPA"),
+    )
+
+    def _raise_html_error(**kw):
+        raise OnpeApiError("Respuesta HTML inesperada del servidor ONPE")
+
+    monkeypatch.setattr(server_module.onpe_api, "get_candidates_by_district", _raise_html_error)
+    monkeypatch.setattr(server_module.store, "append_raw_event", _noop)
+
+    result = onpe_chat("senador más votado en Arequipa")
+
+    assert result["ok"] is True
+    data = result["data"]
+    assert data["intent"] == "legislative_top_candidate"
+    assert data["result"]["available"] is False
+    assert "AREQUIPA" in data["answer"] or "arequipa" in data["answer"].lower()
+    # No debe haber error en el wrapper externo
+    assert result.get("errors", []) == []
+
+
+# ---------------------------------------------------------------------------
+# 19. Hidratación mandatoria: DB vacía retorna db_not_hydrated, NO error
+# ---------------------------------------------------------------------------
+
+def test_db_vacia_retorna_db_not_hydrated(monkeypatch) -> None:
+    """Con DB vacía onpe_chat debe retornar intent=db_not_hydrated con instrucciones, no error."""
+    _disable_autosync(monkeypatch)
+    monkeypatch.setattr(server_module.store, "total_mesas_local", lambda: 0)
+
+    result = onpe_chat("top 5 en Lima")
+
+    assert result["ok"] is True
+    data = result["data"]
+    assert data["intent"] == "db_not_hydrated"
+    assert data["hydrated"] is False
+    assert "next_step" in data
+    assert data["total_mesas_local"] == 0
+    assert "bootstrap" in data["answer"].lower() or "hidrat" in data["answer"].lower()
 
 
 # ---------------------------------------------------------------------------

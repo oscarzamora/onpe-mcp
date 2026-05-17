@@ -41,7 +41,14 @@ onpe_api = OnpeApiClient()
 try:
     gateway.ensure_ready()
 except GatewayError as exc:
-    raise RuntimeError(f"Dependencia requerida onpescraper no disponible: {exc}") from exc
+    # Degraded mode: onpescraper no disponible (sin red, sin git, etc.)
+    # El servidor arranca igual — usa onpe_api directamente y ATuManera CSV como fuente.
+    logger.warning(
+        "onpescraper no disponible: %s. "
+        "Operando en modo degradado: live API + ATuManera CSV. "
+        "Para hidratar la DB llama a onpe_bootstrap_atu_manera.",
+        exc,
+    )
 
 if FastMCP is None:  # pragma: no cover
     raise RuntimeError(
@@ -50,51 +57,132 @@ if FastMCP is None:  # pragma: no cover
 
 mcp = FastMCP("onpe-mcp")
 
+# Flag de sesión: el catálogo extranjero solo se sincroniza una vez por proceso.
+_foreign_catalog_synced: bool = False
+
+# Patrones para detectar consultas de votos por candidato sin keyword "candidato".
+# Compilados una vez a nivel de módulo para evitar overhead por llamada.
+_CANDIDATE_VOTE_PATTERNS = [
+    re.compile(
+        r"\bcu[aá]ntos?\s+votos?\s+(?:tuvo|sac[oó]|tiene|obtuvo|gan[oó]|logr[oó])\s+(.+?)(?:\s+(?:en|a\s+nivel|para|total|en\s+total)\b.*)?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bvotos?\s+(?:de|que\s+(?:sac[oó]|tuvo|obtuvo|logr[oó]))\s+(.+?)(?:\s+(?:en|a\s+nivel|total)\b.*)?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bqu[eé]\s+(?:result(?:ados?|[oó])|votos?)\s+(?:tuvo|obtuvo|sac[oó])\s+(.+?)$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:result(?:ados?|[oó])\s+de|puntaje\s+de)\s+(.+?)(?:\s+(?:en|a\s+nivel|total)\b.*)?$",
+        re.IGNORECASE,
+    ),
+]
+
 
 def _try_bootstrap_snapshot_on_startup() -> None:
-    if not settings.bootstrap_on_startup:
+    """Hidratación automática al arrancar.
+
+    Regla: si la DB está VACÍA la hidratación es MANDATORIA — se intenta
+    independientemente de bootstrap_on_startup.  El flag solo controla si se
+    hace un refresh proactivo cuando la DB ya tiene datos.
+
+    Prioridad:
+      1. onpescraper local (más actual — datos vivos scrapeados)
+      2. ATuManera CSV público (fallback — snapshot estático desde GitHub)
+      3. Aviso crítico — servidor opera en modo degradado (solo live API).
+    """
+    from pathlib import Path as _Path
+
+    def _run_atu_manera_bootstrap(reason: str) -> dict:
+        try:
+            csv_path = _Path(settings.atu_manera_csv_path) if settings.atu_manera_csv_path else None
+            result = store.bootstrap_from_atu_manera_csv(csv_path, id_eleccion=12, force=False)
+            logger.info("atu_manera_bootstrap reason=%s result=%s", reason, result)
+            return result
+        except Exception:
+            logger.exception("Falló bootstrap ATuManera CSV (reason=%s)", reason)
+            return {}
+
+    # ── Verificar estado actual de la DB ────────────────────────────────────
+    try:
+        total = store.total_mesas_local()
+    except Exception:
+        total = 0
+
+    is_empty = total == 0
+
+    # DB con datos + bootstrap deshabilitado → no hacer nada más
+    if not is_empty and not settings.bootstrap_on_startup:
+        logger.debug("DB tiene %d mesas y bootstrap_on_startup=False — omitiendo refresh.", total)
         return
 
-    def _run_atu_manera_bootstrap(reason: str) -> None:
-        try:
-            from pathlib import Path as _Path
+    onpescraper_output = settings.output_dir
+    onpescraper_has_data = (onpescraper_output / "mesas_data.txt").exists()
 
-            csv_path = _Path(settings.atu_manera_csv_path) if settings.atu_manera_csv_path else None
-            atu_result = store.bootstrap_from_atu_manera_csv(
-                csv_path,
-                id_eleccion=12,
+    # ── Paso 1: onpescraper (fuente más actual) ──────────────────────────────
+    if onpescraper_has_data:
+        try:
+            result = store.bootstrap_from_onpescraper(
+                output_dir=onpescraper_output,
+                source_dir=settings.source_dir,
+                include_votes=settings.bootstrap_include_votes,
+                source="startup",
+                id_eleccion=10,
                 force=False,
             )
-            logger.info("atu_manera_bootstrap_result reason=%s result=%s", reason, atu_result)
+            mesas_after = result.get("mesas", 0) if isinstance(result, dict) else 0
+            logger.info(
+                "onpescraper_bootstrap_startup result=%s mesas_after=%s", result, mesas_after
+            )
+            if mesas_after > 0:
+                is_empty = False
         except Exception:
-            logger.exception("Falló bootstrap ATuManera CSV al iniciar (reason=%s)", reason)
-
-    try:
-        result = store.bootstrap_from_onpescraper(
-            output_dir=settings.output_dir,
-            source_dir=settings.source_dir,
-            include_votes=settings.bootstrap_include_votes,
-            source="startup",
-            id_eleccion=10,
-            force=False,
+            logger.exception("Falló bootstrap desde onpescraper al iniciar")
+    else:
+        logger.info(
+            "onpescraper output no disponible en %s.", onpescraper_output,
         )
-        logger.info("bootstrap_startup_result=%s", result)
-    except Exception:
-        logger.exception("Falló bootstrap de snapshot onpescraper al iniciar")
 
-    # ATuManera CSV bootstrap (solo si está habilitado y no hay datos suficientes)
+    # ── Paso 2: ATuManera CSV habilitado explícitamente ──────────────────────
     if settings.atu_manera_bootstrap:
         _run_atu_manera_bootstrap("env_enabled")
+        is_empty = store.total_mesas_local() == 0
 
-    # Fallback de primer arranque: si sigue vacío, hidrata desde CSV público por defecto.
-    try:
-        if store.total_mesas_local() == 0:
-            _run_atu_manera_bootstrap("cold_start_empty_db")
-    except Exception:
-        logger.exception("Falló validación de cold start para hidratación inicial")
+    # ── Paso 3 (MANDATORIO): si DB sigue vacía → descarga ATuManera CSV ──────
+    if is_empty:
+        logger.warning(
+            "DB vacía al arrancar — hidratación MANDATORIA. "
+            "Descargando ATuManera CSV (~92 766 mesas, 1-3 min según red)."
+        )
+        result = _run_atu_manera_bootstrap("cold_start_mandatory")
+        mesas_loaded = result.get("mesas", 0) if isinstance(result, dict) else 0
+        if mesas_loaded > 0:
+            logger.info("Hidratacion cold-start completada: %d mesas cargadas.", mesas_loaded)
+        else:
+            logger.critical(
+                "HIDRATACION FALLIDA: no se pudo cargar datos desde ninguna fuente. "
+                "El servidor opera en modo degradado (solo live API). "
+                "Para hidratar manualmente llama a onpe_bootstrap_snapshot() o "
+                "onpe_bootstrap_atu_manera()."
+            )
+
 
 
 _try_bootstrap_snapshot_on_startup()
+
+# Si el catálogo extranjero ya tiene datos en SQLite, no es necesario re-sincronizar.
+try:
+    with store._connect() as _startup_conn:
+        _fcat_count = _startup_conn.execute(
+            "SELECT COUNT(*) AS c FROM foreign_catalog"
+        ).fetchone()["c"]
+    if _fcat_count > 0:
+        _foreign_catalog_synced = True
+except Exception:
+    pass
 
 
 def _norm(text: str) -> str:
@@ -350,11 +438,35 @@ def onpe_health() -> dict[str, Any]:
         source_dir = settings.source_dir
         output_dir = settings.output_dir
 
+        total_mesas = 0
+        total_votos = 0
+        try:
+            total_mesas = store.total_mesas_local()
+            with store._connect() as _c:
+                total_votos = int((_c.execute("SELECT COUNT(*) AS c FROM votos").fetchone() or {"c": 0})["c"])
+        except Exception:
+            pass
+
+        hydrated = total_mesas > 0
+        onpescraper_has_data = (output_dir / "mesas_data.txt").exists()
+
+        if hydrated:
+            next_step = None
+        elif onpescraper_has_data:
+            next_step = "Llama a onpe_bootstrap_snapshot() para cargar datos de onpescraper (más actualizado)."
+        else:
+            next_step = (
+                "Llama a onpe_bootstrap_atu_manera() para descargar las 92,766 mesas (~2-5 min). "
+                "O clona https://github.com/oscarzamora/onpeescraper en carpeta hermana y llama onpe_bootstrap_snapshot()."
+            )
+
         checks = {
             "scraper_root_exists": scraper_root.exists(),
             "source_dir_exists": source_dir.exists(),
             "output_dir_exists": output_dir.exists(),
             "sqlite_db_exists": store.db_path.exists(),
+            "onpescraper_has_data": onpescraper_has_data,
+            "db_hydrated": hydrated,
         }
 
         import_ok = True
@@ -365,8 +477,14 @@ def onpe_health() -> dict[str, Any]:
             import_ok = False
             import_error = str(exc)
 
+        status = "ok" if hydrated and import_ok else ("degraded" if hydrated else "not_hydrated")
+
         data = {
-            "status": "ok" if all(checks.values()) and import_ok else "degraded",
+            "status": status,
+            "hydrated": hydrated,
+            "total_mesas_local": total_mesas,
+            "total_votos_local": total_votos,
+            "next_step": next_step,
             "checks": checks,
             "import_onpe_scraper_ok": import_ok,
             "import_onpe_scraper_error": import_error,
@@ -481,7 +599,49 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         if not q:
             raise ValueError("query no puede estar vacía")
 
+        # ── Guard: DB no hidratada ──────────────────────────────────────────
+        try:
+            _total_mesas = store.total_mesas_local()
+        except Exception:
+            _total_mesas = 0
+
+        if _total_mesas == 0:
+            onpescraper_ready = (settings.output_dir / "mesas_data.txt").exists()
+            if onpescraper_ready:
+                next_step = (
+                    "Llama a **onpe_bootstrap_snapshot()** para cargar los datos de onpescraper "
+                    "(fuente más actualizada). Tarda ~30-60 segundos."
+                )
+            else:
+                next_step = (
+                    "Llama a **onpe_bootstrap_atu_manera()** para descargar las 92,766 mesas "
+                    "desde GitHub (~2-5 min según red). O clona https://github.com/oscarzamora/onpeescraper "
+                    "en la carpeta hermana y llama a onpe_bootstrap_snapshot()."
+                )
+            return ok_response(
+                {
+                    "intent": "db_not_hydrated",
+                    "hydrated": False,
+                    "total_mesas_local": 0,
+                    "answer": (
+                        "⚠️ **La base de datos local está vacía.** "
+                        "El MCP necesita hidratación antes de responder consultas electorales.\n\n"
+                        f"**Siguiente paso:** {next_step}\n\n"
+                        "Mientras tanto puedo responder preguntas cualitativas sobre el proceso electoral "
+                        "usando el compendio interno. Para datos numéricos de mesas específicas, "
+                        "usa onpe_get_mesa() directamente (consulta live a ONPE)."
+                    ),
+                    "next_step": next_step,
+                },
+                started_ms=started_ms,
+            )
+
         mesa_match = re.search(r"\b(\d{1,6})\b", q)
+        # Evitar interpretar años (1900-2099) como códigos de mesa cuando no hay palabra "mesa"
+        if mesa_match and "mesa" not in _norm(q):
+            _num = int(mesa_match.group(1))
+            if 1900 <= _num <= 2099:
+                mesa_match = None
         q_norm = _norm(q)
         top_n = extract_top_n(q, default=5, minimum=1, maximum=20)
 
@@ -534,16 +694,32 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                     last_error = exc
 
             if not top_rows:
-                if last_error is not None:
-                    raise OnpeApiError(str(last_error))
+                error_msg = str(last_error) if last_error else "sin datos"
                 data = {
                     "intent": "legislative_top_candidate",
                     "answer": (
-                        f"No encontré candidatos para {cargo} en '{district.nombre}' en este momento."
+                        f"El endpoint de {cargo} para '{district.nombre}' no está disponible "
+                        "en este momento — ONPE puede estar devolviendo HTML en vez de JSON "
+                        "(anti-bot o mantenimiento). Intenta más tarde o usa onpe_get_mesa "
+                        "para consultas individuales.\n\n"
+                        f"Distrito encontrado: **{district.nombre}** "
+                        f"(id={district.id_distrito_electoral})"
                     ),
-                    "result": None,
-                    "source": "onpe_live",
+                    "result": {
+                        "cargo": cargo,
+                        "distrito": {
+                            "id": district.id_distrito_electoral,
+                            "nombre": district.nombre,
+                        },
+                        "available": False,
+                    },
+                    "source": "onpe_live_unavailable",
+                    "meta": {"error": error_msg},
                 }
+                store.append_raw_event(
+                    "onpe_chat_legislative_unavailable",
+                    {"query": q, "cargo": cargo, "district_id": district.id_distrito_electoral, "error": error_msg},
+                )
                 return ok_response(data, started_ms=started_ms)
 
             top = top_rows[0]
@@ -615,7 +791,8 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             return ""
 
         _has_mesa_kw = "mesa" in q_norm
-        _prefix_m = re.search(r"\b(\d{3,6})\b", q)
+        # Support both "900K" shorthand and plain digit ranges
+        _prefix_m = re.search(r"\b(\d{3,6})\b", q) or re.search(r"\b(\d{3,4})\s*[kK]\b", q)
         _has_prefix_num = bool(_prefix_m)
 
         # ── Intent: verificar existencia de mesas (responder a "mesas fantasma") ──
@@ -633,11 +810,12 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         if _has_mesa_kw and _has_prefix_num and (_has_existence_deny or _has_describe_mesa) and not (
             "primero" in q_norm or "gano" in q_norm or "gana" in q_norm
         ):
-            mesa_prefix = _prefix_m.group(1)  # type: ignore[union-attr]
+            mesa_prefix = extract_mesa_prefix_claim(q) or _prefix_m.group(1)  # type: ignore[union-attr]
             coverage = _build_coverage_block(q_norm, id_eleccion, timeout, prefix=mesa_prefix)
             description = store.describe_mesa_prefix(mesa_prefix)
             total_mesas = int(description.get("total_mesas") or 0)
             locations = description.get("locations") or []
+            top_candidates = store.get_top_candidates_for_prefix(mesa_prefix, top_n=5)
 
             context_notes = get_context_notes(q_norm, mesa_prefix)
 
@@ -648,21 +826,53 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                     "las mesas son reales y figuran en el padrón oficial de ONPE."
                 )
             else:
-                locs_str = "; ".join(
-                    f"{loc['local_votacion'] or loc['ubigeo']} ({loc['num_mesas']} mesas"
-                    + (f", {loc['votos_emitidos']} votos" if loc["votos_emitidos"] else "")
-                    + ")"
-                    for loc in locations[:5]
-                )
-                answer = (
-                    f"Las mesas con prefijo '{mesa_prefix}' SÍ existen: tengo {total_mesas} registradas. "
-                    f"Total electores hábiles: {description['total_electores_habiles']}, "
-                    f"votos emitidos: {coverage['votos_emitidos']} "
-                    f"(cobertura {coverage['coverage_pct']}% — {coverage['verdict']}). "
-                    f"Ubicaciones principales: {locs_str}."
-                )
-            if context_notes:
-                answer += " — Contexto: " + context_notes[0]
+                display_suffix = "K" if len(mesa_prefix) <= 3 and mesa_prefix.isdigit() else ""
+                label = f"mesas {mesa_prefix}{display_suffix}"
+                ve = coverage["votos_emitidos"]
+                vv = coverage["votos_validos"]
+                eh = int(description.get("total_electores_habiles") or 0)
+                eh_min = description.get("electores_min", 0)
+                eh_max = description.get("electores_max", 0)
+                eh_avg = description.get("electores_avg", 0.0)
+                cov_pct = coverage["coverage_pct"]
+                verdict = coverage["verdict"]
+                departamentos = description.get("departamentos") or []
+
+                lines = [
+                    f"## ✅ Las {label} SÍ existen — datos cache local ONPE\n",
+                    "| Indicador | Dato |",
+                    "|-----------|------|",
+                    f"| Total mesas | **{total_mesas:,}** |",
+                    f"| Con votos registrados | **{coverage['mesas_con_votos']:,} ({cov_pct}%)** |",
+                    f"| Electores habilitados | {eh:,} |",
+                    f"| Electores por mesa (min/avg/max) | {eh_min} / {eh_avg:.1f} / {eh_max} |",
+                    f"| Votos emitidos | {ve:,} |",
+                    f"| Votos válidos | {vv:,} |",
+                    f"| Cobertura | {verdict} |",
+                    "",
+                ]
+
+                if departamentos:
+                    lines.append("### 🗺️ Distribución por departamento\n")
+                    lines.append("| Departamento | Mesas | Electores | Votos |")
+                    lines.append("|--------------|-------|-----------|-------|")
+                    for d in departamentos:
+                        lines.append(
+                            f"| {d['departamento']} | {d['n_mesas']:,} | {d['total_electores_habiles']:,} | {d['total_votos_emitidos']:,} |"
+                        )
+                    lines.append("")
+
+                if top_candidates:
+                    lines.append("### 🗳️ Top candidatos en este segmento\n")
+                    for c in top_candidates:
+                        lines.append(f"{c['rank']}. **{c['nombre']}**: {c['votos']:,} votos ({c['n_mesas']:,} mesas)")
+                    lines.append("")
+
+                if context_notes:
+                    lines.append("### 📚 Contexto\n")
+                    lines.append(context_notes[0])
+
+                answer = "\n".join(lines)
 
             data = {
                 "intent": "range_existence_verify",
@@ -935,13 +1145,101 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             )
             return ok_response(data, started_ms=started_ms)
 
+        # ── Geo doméstica PRIMERO (departamento/provincia/distrito peruano) ───
+        # Se verifica antes que la extranjera para evitar que Lima, Loreto, etc.
+        # activen el costoso auto-sync del catálogo extranjero (700ms).
+        domestic_result = _resolve_domestic_geo_query(q)
+        if domestic_result is not None:
+            dept_name, ubigeos_dept = domestic_result
+
+            cache_key = _geo_query_cache_key(None, dept_name, top_n)
+            cached_geo = store.get_geo_query_cache(cache_key, settings.geo_query_cache_ttl_seconds)
+            if cached_geo is not None:
+                cached_geo["source"] = "sqlite_query_cache"
+                cached_geo["answer"] += " (cache de consulta)"
+                return ok_response(cached_geo, started_ms=started_ms)
+
+            aggregates = store.aggregate_votes_by_party(ubigeos_dept if ubigeos_dept else None)
+            top = aggregates[:top_n]
+            mesas_count = store.count_mesas_by_ubigeos(ubigeos_dept) if ubigeos_dept else 0
+            total_votes = sum(int(item.get("total_votos", 0)) for item in aggregates)
+            is_partial = mesas_count == 0 or total_votes == 0
+            coverage = _build_coverage_block(q_norm, id_eleccion, timeout, ubigeos=ubigeos_dept if ubigeos_dept else None)
+
+            _dept_prefix_result = find_peru_department_prefix(q)
+            dept_prefix = _dept_prefix_result[1] if _dept_prefix_result else ""
+
+            # Enriquecer con nombres de candidatos
+            cand_map_geo = store.load_candidate_map(settings.source_dir / "candidato.txt")
+            valid_top = [
+                t for t in top
+                if "blanco" not in t.get("nombre_partido","").lower()
+                and "nulo" not in t.get("nombre_partido","").lower()
+                and "impugnad" not in t.get("nombre_partido","").lower()
+            ]
+            for t in valid_top:
+                t["candidato"] = cand_map_geo.get(str(t.get("partido_id","")), "")
+
+            if valid_top and not is_partial:
+                total_validos = sum(int(t.get("total_votos",0)) for t in valid_top)
+                lines = [f"**Top {min(top_n, len(valid_top))} en {dept_name.title()}** "
+                         f"({mesas_count:,} mesas · {total_votes:,} votos emitidos)\n"]
+                for i, t in enumerate(valid_top[:top_n], 1):
+                    pct = int(t["total_votos"])/total_validos*100 if total_validos else 0
+                    nombre = t.get("candidato") or t["nombre_partido"]
+                    lines.append(f"{i}. **{nombre}** — {int(t['total_votos']):,} votos ({pct:.1f}%)")
+                answer = "\n".join(lines)
+            else:
+                answer = (
+                    f"Para '{dept_name.title()}' encontré {mesas_count} mesas en el consolidado local. "
+                    f"Votos acumulados: {total_votes}."
+                )
+                if is_partial:
+                    answer += (
+                        " Resultado parcial: sin votos locales suficientes para este ámbito. "
+                        "Usa onpe_get_mesa o onpe_get_mesas_batch para hidratar el cache."
+                    )
+            data = {
+                "intent": "geo_domestic",
+                "answer": answer,
+                "result": {
+                    "query": dept_name,
+                    "dept_prefix": dept_prefix,
+                    "ubigeos_match": len(ubigeos_dept),
+                    "mesas_match": mesas_count,
+                    "total_votos": total_votes,
+                    "top_n": top_n,
+                    "top_partidos": top,
+                    "is_partial": is_partial,
+                    "coverage": coverage,
+                },
+                "source": "sqlite",
+                "data_tier": data_tier_label("sqlite"),
+            }
+            store.upsert_geo_query_cache(cache_key, data)
+            store.append_raw_event(
+                "onpe_chat_geo_domestic",
+                {"query": q, "dept_name": dept_name, "dept_prefix": dept_prefix, "mesas": mesas_count},
+            )
+            return ok_response(data, started_ms=started_ms)
+
+        # ── Geo extranjera (solo si no es doméstica) ────────────────────────
+        global _foreign_catalog_synced
         geo_resolution = _resolve_foreign_geo_query(q)
         sync_performed = False
-        if geo_resolution is None and settings.auto_sync_foreign_catalog_on_demand:
+        # Auto-sync: solo si la sesión aún no sincronizó y la query tiene candidatos geo.
+        # Sincronizar solo UNA vez por proceso para no pagar 700ms en cada query.
+        if (
+            geo_resolution is None
+            and settings.auto_sync_foreign_catalog_on_demand
+            and not _foreign_catalog_synced
+            and extract_foreign_geo_candidates(q)
+        ):
             try:
                 election_id, rows = onpe_api.build_foreign_catalog(None)
                 upserted = store.upsert_foreign_catalog(rows)
                 sync_performed = upserted > 0
+                _foreign_catalog_synced = True
                 store.append_raw_event(
                     "onpe_chat_geo_catalog_autosync",
                     {
@@ -954,6 +1252,9 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                 geo_resolution = _resolve_foreign_geo_query(q)
             except Exception:
                 logger.exception("Falló auto-sync de catálogo extranjero en onpe_chat")
+        elif geo_resolution is None and _foreign_catalog_synced:
+            # Ya sincronizamos en esta sesión — intentar de nuevo sin sync
+            geo_resolution = _resolve_foreign_geo_query(q)
 
         if geo_resolution is not None:
             geo_field, geo_expr, catalog = geo_resolution
@@ -1004,68 +1305,24 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             store.append_raw_event("onpe_chat_geo", {"query": q, "ubigeos": len(ubigeos), "mesas": mesas_count})
             return ok_response(data, started_ms=started_ms)
 
-        # Intención geo doméstica: departamento/provincia/distrito peruano (ej. "top 3 en Loreto")
-        domestic_result = _resolve_domestic_geo_query(q)
-        if domestic_result is not None:
-            dept_name, ubigeos_dept = domestic_result
-
-            cache_key = _geo_query_cache_key(None, dept_name, top_n)
-            cached_geo = store.get_geo_query_cache(cache_key, settings.geo_query_cache_ttl_seconds)
-            if cached_geo is not None:
-                cached_geo["source"] = "sqlite_query_cache"
-                cached_geo["answer"] += " (cache de consulta)"
-                return ok_response(cached_geo, started_ms=started_ms)
-
-            aggregates = store.aggregate_votes_by_party(ubigeos_dept if ubigeos_dept else None)
-            top = aggregates[:top_n]
-            mesas_count = store.count_mesas_by_ubigeos(ubigeos_dept) if ubigeos_dept else 0
-            total_votes = sum(int(item.get("total_votos", 0)) for item in aggregates)
-            is_partial = mesas_count == 0 or total_votes == 0
-            coverage = _build_coverage_block(q_norm, id_eleccion, timeout, ubigeos=ubigeos_dept if ubigeos_dept else None)
-
-            # Derive dept_prefix for backward compat in result
-            _dept_prefix_result = find_peru_department_prefix(q)
-            dept_prefix = _dept_prefix_result[1] if _dept_prefix_result else ""
-
-            answer = (
-                f"Para '{dept_name.title()}' encontré {mesas_count} mesas en el consolidado local. "
-                f"Votos acumulados: {total_votes}."
-            )
-            if is_partial:
-                answer += (
-                    " Resultado parcial: sin votos locales suficientes para este ámbito. "
-                    "Usa onpe_get_mesa o onpe_get_mesas_batch para hidratar el cache."
-                )
-            data = {
-                "intent": "geo_domestic",
-                "answer": answer,
-                "result": {
-                    "query": dept_name,
-                    "dept_prefix": dept_prefix,
-                    "ubigeos_match": len(ubigeos_dept),
-                    "mesas_match": mesas_count,
-                    "total_votos": total_votes,
-                    "top_n": top_n,
-                    "top_partidos": top,
-                    "is_partial": is_partial,
-                    "coverage": coverage,
-                },
-                "source": "sqlite",
-                "data_tier": data_tier_label("sqlite"),
-            }
-            store.upsert_geo_query_cache(cache_key, data)
-            store.append_raw_event(
-                "onpe_chat_geo_domestic",
-                {"query": q, "dept_name": dept_name, "dept_prefix": dept_prefix, "mesas": mesas_count},
-            )
-            return ok_response(data, started_ms=started_ms)
-
         # Intención 1: candidato específico
-        if "candidato" in q_norm:
-            candidate_expr = q
-            match = re.search(r"candidato\s+(.+)$", q, flags=re.IGNORECASE)
-            if match:
-                candidate_expr = match.group(1).strip()
+        # Detecta tanto "candidato X" como "cuántos votos tuvo/sacó X", "votos de X", etc.
+        # Los patrones están compilados a nivel de módulo (_CANDIDATE_VOTE_PATTERNS).
+        _candidate_from_pattern: str | None = None
+        if "candidato" not in q_norm and "mesa" not in q_norm:
+            for _vp in _CANDIDATE_VOTE_PATTERNS:
+                _vm = _vp.search(q)
+                if _vm:
+                    _candidate_from_pattern = _vm.group(1).strip()
+                    break
+
+        if "candidato" in q_norm or _candidate_from_pattern:
+            # Priorizar el nombre extraído por patrón sobre la query completa
+            candidate_expr = _candidate_from_pattern or q
+            if "candidato" in q_norm:
+                match = re.search(r"candidato\s+(.+)$", q, flags=re.IGNORECASE)
+                if match:
+                    candidate_expr = match.group(1).strip()
 
             aggregates = store.aggregate_votes_by_party()
             if not aggregates:
@@ -1126,17 +1383,57 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
 
         if mesa_match:
             code = validate_mesa_code(mesa_match.group(1))
+
+            # Tier 1a: API cache fresco (JSON completo, máx cache_ttl_seconds)
             cached = store.get_cached_mesa(code, settings.cache_ttl_seconds)
             if cached is not None:
+                mesa_data = cached.get("mesa_data") or {}
+                estado = mesa_data.get("estado_acta", "No disponible")
+                votos = cached.get("votos") or []
+                top3 = [v for v in votos if v.get("votos", 0) > 0
+                        and "blanco" not in str(v.get("nombre_partido","")).lower()
+                        and "nulo" not in str(v.get("nombre_partido","")).lower()][:3]
+                top3_str = ", ".join(f"{v['nombre_partido']} {v['votos']}" for v in top3)
                 data = {
                     "intent": "mesa",
-                    "answer": f"Mesa {code}: estado {cached.get('mesa_data', {}).get('estado_acta', 'No disponible')} (cache local).",
+                    "answer": f"Mesa {code} ({mesa_data.get('local_votacion','')}, {estado}). Top candidatos: {top3_str}.",
                     "result": cached,
                     "source": "sqlite_cache",
                     "data_tier": "tier_1_local_cache",
                 }
                 return ok_response(data, started_ms=started_ms)
 
+            # Tier 1b: DB local hidratada (mesas_data + votos) — sin llamada HTTP
+            local_bundle = store.get_mesa_from_local(code)
+            if local_bundle is not None:
+                mesa_data = local_bundle.get("mesa_data") or {}
+                estado = mesa_data.get("estado_acta", "No disponible")
+                votos = local_bundle.get("votos") or []
+                # Cargar nombres de candidatos
+                cand_map = store.load_candidate_map(settings.source_dir / "candidato.txt")
+                for v in votos:
+                    v["candidato"] = cand_map.get(str(v.get("partido_id", "")), "")
+                top3 = [v for v in votos if v.get("votos", 0) > 0
+                        and "blanco" not in str(v.get("nombre_partido","")).lower()
+                        and "nulo" not in str(v.get("nombre_partido","")).lower()][:3]
+                top3_str = ", ".join(
+                    f"{v.get('candidato') or v['nombre_partido']} {v['votos']}"
+                    for v in top3
+                )
+                loc = mesa_data.get("local_votacion", "")
+                dept = mesa_data.get("departamento", "")
+                loc_str = f"{loc}, {dept}" if dept else loc
+                store.append_raw_event("onpe_chat_mesa", {"query": q, "codigo_mesa": code, "source": "local_db"})
+                data = {
+                    "intent": "mesa",
+                    "answer": f"Mesa {code} ({loc_str}): {estado}. {mesa_data.get('votos_emitidos',0)} votos emitidos de {mesa_data.get('electores_habiles',0)} electores. Top candidatos: {top3_str}.",
+                    "result": local_bundle,
+                    "source": "local_db",
+                    "data_tier": "tier_1_local_cache",
+                }
+                return ok_response(data, started_ms=started_ms)
+
+            # Tier 2: Live API (mesa no está en DB local)
             mesa = onpe_api.get_mesa(code, id_eleccion=max(1, int(id_eleccion)), timeout=max(1, int(timeout)))
             store.upsert_mesa_bundle(code, mesa, source="onpe_live", id_eleccion=max(1, int(id_eleccion)))
             store.append_raw_event("onpe_chat_mesa", {"query": q, "codigo_mesa": code, "found": bool(mesa.get("found"))})

@@ -208,6 +208,70 @@ class DataStore:
 
         return json.loads(str(row["payload_json"]))
 
+    def get_mesa_from_local(self, codigo_mesa: str) -> dict[str, Any] | None:
+        """Construye bundle de mesa desde tablas locales (mesas_data + votos + agrupaciones).
+
+        Evita llamada al API live cuando los datos ya están hidratados.
+        Retorna None si la mesa no existe en mesas_data.
+        """
+        with self._connect() as conn:
+            mesa_row = conn.execute(
+                "SELECT * FROM mesas_data WHERE codigo_mesa = ?",
+                (codigo_mesa,),
+            ).fetchone()
+            if mesa_row is None:
+                return None
+
+            votos_rows = conn.execute(
+                """SELECT v.partido_id, COALESCE(a.nombre,'') AS nombre_partido, v.votos
+                   FROM votos v
+                   LEFT JOIN agrupaciones a ON a.partido_id = v.partido_id
+                   WHERE v.codigo_mesa = ?
+                   ORDER BY v.votos DESC""",
+                (codigo_mesa,),
+            ).fetchall()
+
+            location_row = conn.execute(
+                "SELECT departamento, ciudad, pais FROM ubigeo_location_cache WHERE ubigeo = ?",
+                (str(mesa_row["ubigeo"] or ""),),
+            ).fetchone()
+
+        mesa_data: dict[str, Any] = {
+            "codigo_mesa": codigo_mesa,
+            "ubigeo": str(mesa_row["ubigeo"] or ""),
+            "local_votacion": str(mesa_row["local_votacion"] or ""),
+            "electores_habiles": int(mesa_row["electores_habiles"] or 0),
+            "votos_emitidos": int(mesa_row["votos_emitidos"] or 0),
+            "votos_validos": int(mesa_row["votos_validos"] or 0),
+            "blancos": int(mesa_row["blancos"] or 0),
+            "nulos": int(mesa_row["nulos"] or 0),
+            "impugnados": int(mesa_row["impugnados"] or 0),
+            "estado_acta": str(mesa_row["estado_acta"] or ""),
+        }
+        if location_row:
+            mesa_data.update({
+                "departamento": str(location_row["departamento"] or ""),
+                "ciudad": str(location_row["ciudad"] or ""),
+            })
+
+        votos = [
+            {
+                "partido_id": str(r["partido_id"]),
+                "nombre_partido": str(r["nombre_partido"]),
+                "votos": int(r["votos"] or 0),
+            }
+            for r in votos_rows
+        ]
+
+        return {
+            "codigo_mesa": codigo_mesa,
+            "found": True,
+            "mesa_data": mesa_data,
+            "agrupaciones": [{"partido_id": v["partido_id"], "nombre": v["nombre_partido"]} for v in votos],
+            "votos": votos,
+            "source": "local_db",
+        }
+
     def upsert_mesa_bundle(
         self,
         codigo_mesa: str,
@@ -820,7 +884,17 @@ class DataStore:
 
     def try_bootstrap_reniec(self, source_dir: Path) -> int:
         """Pobla ubigeo_reniec desde geodir-ubigeo-reniec.xlsx (requiere openpyxl).
-        Retorna filas insertadas/actualizadas. Silencia si openpyxl no está disponible."""
+        Retorna filas insertadas/actualizadas. Silencia si openpyxl no está disponible.
+        No re-lee el xlsx si la tabla ya tiene datos (evita costosa carga en arranque)."""
+        # Skip rápido si ya hay filas en la tabla (opción de refresco: borrar tabla manualmente)
+        try:
+            with self._connect() as conn:
+                cnt = conn.execute("SELECT COUNT(*) AS c FROM ubigeo_reniec").fetchone()["c"]
+            if cnt > 0:
+                return cnt
+        except Exception:
+            pass
+
         try:
             import openpyxl  # type: ignore[import]
         except ImportError:
@@ -1496,7 +1570,7 @@ class DataStore:
                         FROM mesas_pref mp
                         INNER JOIN mesa_top mt ON mt.codigo_mesa = mp.codigo_mesa
                         INNER JOIN votos v ON v.codigo_mesa = mt.codigo_mesa
-                            AND v.max_votos = mt.max_votos AND v.partido_id IN ({placeholders})
+                            AND v.votos = mt.max_votos AND v.partido_id IN ({placeholders})
                     )
                     SELECT
                         ch.ubigeo, COALESCE(ch.local_votacion,'') AS local_votacion,
@@ -1663,12 +1737,53 @@ class DataStore:
             }
             for row in loc_rows
         ]
+
+        # Extra: breakdown by departamento (via ubigeo_location_cache)
+        with self._connect() as conn:
+            depto_rows = conn.execute(
+                """
+                SELECT
+                  COALESCE(u.departamento, 'Sin departamento') AS depto,
+                  COUNT(DISTINCT m.codigo_mesa) AS n_mesas,
+                  SUM(m.electores_habiles) AS total_eh,
+                  SUM(m.votos_emitidos) AS total_votos
+                FROM mesas_data m
+                LEFT JOIN ubigeo_location_cache u ON m.ubigeo = u.ubigeo
+                WHERE m.codigo_mesa LIKE ?
+                GROUP BY depto ORDER BY n_mesas DESC LIMIT 20
+                """,
+                (f"{prefix}%",),
+            ).fetchall()
+            eh_stats = conn.execute(
+                """SELECT MIN(electores_habiles) as min_eh, MAX(electores_habiles) as max_eh,
+                   ROUND(AVG(electores_habiles),1) as avg_eh
+                   FROM mesas_data WHERE codigo_mesa LIKE ?""",
+                (f"{prefix}%",),
+            ).fetchone()
+
+        departamentos = [
+            {
+                "departamento": str(r["depto"]),
+                "n_mesas": int(r["n_mesas"] or 0),
+                "total_electores_habiles": int(r["total_eh"] or 0),
+                "total_votos_emitidos": int(r["total_votos"] or 0),
+            }
+            for r in depto_rows
+        ]
+        eh_min = int(eh_stats["min_eh"] or 0) if eh_stats else 0
+        eh_max = int(eh_stats["max_eh"] or 0) if eh_stats else 0
+        eh_avg = float(eh_stats["avg_eh"] or 0) if eh_stats else 0.0
+
         return {
             "mesa_prefix": prefix,
             "total_mesas": total_mesas,
             "total_votos_emitidos": total_votos,
             "total_electores_habiles": total_electores,
+            "electores_min": eh_min,
+            "electores_max": eh_max,
+            "electores_avg": eh_avg,
             "locations": locations,
+            "departamentos": departamentos,
         }
 
     def summarize_mesa_prefix(self, mesa_prefix: str, sample_size: int = 5) -> dict[str, Any]:

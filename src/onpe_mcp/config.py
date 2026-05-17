@@ -26,7 +26,7 @@ class Settings:
 
     @staticmethod
     def from_env() -> "Settings":
-        workspace_default = Path(__file__).resolve().parents[3]
+        workspace_default = Path(__file__).resolve().parents[2]  # repo root: onpe-mcp/
         scraper_root = Path(
             os.getenv(
                 "ONPE_SCRAPER_ROOT",
