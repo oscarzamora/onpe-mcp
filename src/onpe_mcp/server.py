@@ -1006,6 +1006,19 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                 started_ms=started_ms,
             )
 
+        # Sports-match result guard: "el resultado del partido X vs Y" → non-electoral
+        if re.search(r"\b(?:resultado|partido)\b", _q_norm_guard) and re.search(r"\bvs\.?\b", _q_norm_guard) and not any(kw in _q_norm_guard for kw in ("voto", "votos", "eleccion", "candidato", "mesa")):
+            return ok_response(
+                {
+                    "intent": "unknown",
+                    "answer": (
+                        "Esa consulta parece sobre deportes o competencias, no sobre resultados electorales. "
+                        "Puedo responder sobre votos, candidatos y mesas electorales peruanas."
+                    ),
+                },
+                started_ms=started_ms,
+            )
+
         _has_historical = bool(
             re.search(r"\b(?:antes\s+de\s+ser|antes\s+de\s+convertirse|biografia|historia\s+de|quien\s+fue\s+.+\s+antes|nació|murio|estudio|se\s+fund[oó]|se\s+cre[oó]|fue\s+fundado|fue\s+creado|cuando\s+(?:se\s+)?(?:fund|cre|naci|establec)|primer\s+(?:presidente|mandatario|ministro|alcalde|gobernador|rector|director|secretario|canciller)|pib\b|gdp\b|inflaci[oó]n\b|econom[ií]a\b|desempleo\b|pobreza\b|como\s+se\s+llama\b|cu[aá]l\s+es\s+el\s+nombre\s+de\b|cu[aá]l\s+es\s+la\s+capital\s+de\b)\b", _q_norm_guard)
             and not any(kw in _q_norm_guard for kw in ("voto", "votos", "eleccion", "resultado", "candidato", "mesa"))
@@ -2191,6 +2204,9 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "residentes en el extranjero", "residentes en el exterior",
             "peruanos en el exterior", "peruanos en el extranjero",
             "comunidad peruana en el exterior",
+            # resumen/informe detallado
+            "resumen de los resultados", "resumen de resultados electorales",
+            "resultados electorales", "resultados del proceso electoral",
             # disponibilidad de resultados
             "hay resultados", "resultados disponibles", "hay datos disponibles",
             "estan disponibles los resultados", "ya hay resultados",
