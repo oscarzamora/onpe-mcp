@@ -213,7 +213,8 @@ _MULTI_CANDIDATE_PATTERN = re.compile(
     r"|\b(.+?)\s+contra\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\b(.+?)\s+o\s+(.+?)\s+(?:quien|cu[aá]l|cu[aá]ntos?)\s+(?:sac[oó]|tuvo|obtuvo|tiene|tiene\s+m[aá]s)"
     r"|\bquien\s+(?:sac[oó]|tuvo|obtuvo|tiene)\s+m[aá]s\s+(.+?)\s+o\s+(.+?)(?:\?|$)"
-    r"|\b(.+?)\s+cu[aá]ntos?\s+votos?\s+(?:y|e)\s+(.+?)\s+cu[aá]ntos?\s+votos?",
+    r"|\b(.+?)\s+cu[aá]ntos?\s+votos?\s+(?:y|e)\s+(.+?)\s+cu[aá]ntos?\s+votos?"
+    r"|\b(?:si\s+)?(.+?)\s+(?:le\s+)?gan[oó]\s+(?:a|contra)\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$",
     re.IGNORECASE,
 )
 
@@ -332,13 +333,14 @@ def _norm(text: str) -> str:
 _FILLER_START = re.compile(
     r"^(?:"
     r"a\s+ver[,\s]+"
-    r"|(?:me\s+)?(?:puedes?\s+)?(?:decir|dime|cuéntame|cuentame)[,\s]+"
+    r"|(?:me\s+)?(?:puedes?\s+)?(?:decir|dime|cuéntame|cuentame|mostrarme|muéstrame)[,\s]+"
+    r"|(?:puedes?\s+)?(?:mostrarme|muéstrame)[,\s]+"
     r"|(?:quiero|quisiera|necesito|podrias?\s+decirme|podrías?\s+decirme)\s+(?:saber\s+)?"
     r"|(?:oye|oiga|escucha)[,\s]+"
     r"|(?:por\s+favor[,\s]+)?"
     r"|(?:sabes?\s+(?:cuantos?|cu[aá]ntos?|como|cómo)\s+)?"
     r"|(?:dime\s+)?"
-    r"|(?:(?:me\s+)?(?:puedes?|podr[íi]as?)\s+(?:decirme\s+)?)?"
+    r"|(?:(?:me\s+)?(?:puedes?|podr[íi]as?)\s+(?:decirme\s+|mostrarme\s+)?)?"
     r")",
     re.IGNORECASE,
 )
@@ -828,7 +830,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         ):
             mesa_match = None
         # Normalizar puntuación especial para mejorar pattern matching
-        q = re.sub(r"[¿¡:;]", " ", q)
+        q = re.sub(r"[¿¡:;?!]", " ", q)
         q = re.sub(r"\s{2,}", " ", q).strip()
         # Eliminar muletillas verbales del inicio/fin (normalización lenguaje natural)
         q = _strip_filler(q)
@@ -1672,7 +1674,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "resultados de la eleccion", "resultado de la eleccion",
             "todos los resultados", "ver todos los resultados",
             "todos los candidatos",
-            "ganadores de", "ganadores en la", "quienes ganaron",
+            "ganadores de", "ganadores en la",
             "total de votos", "total votos", "votos por candidato",
             "al pais", "en el pais", "todo el pais", "el pais",
         }
@@ -1697,6 +1699,10 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         # "primera vuelta" / "segunda vuelta" sin geo explícita → nacional
         if not _is_national and re.search(r"\b(?:primera|segunda)\s+vuelta\b", q_norm) and not re.search(r"\ben\s+\w", q_norm):
             _is_national = True
+        # "quienes ganaron" sin geo → nacional; con "en PLACE" → geo_domestic
+        if not _is_national and re.search(r"\bquienes?\s+(?:son\s+(?:los\s+)?)?(?:gan[ao]ron?|lider(?:es)?)\b", q_norm):
+            if not re.search(r"\ben\s+\w", q_norm):
+                _is_national = True
 
         if _is_national:
             _nat_aggs = store.aggregate_votes_by_party()
