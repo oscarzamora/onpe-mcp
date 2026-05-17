@@ -68,7 +68,7 @@ _CANDIDATE_VOTE_PATTERNS = [
     # acepta "en total", "fue que" intercalados: "cuántos votos fue que obtuvo X"
     # acepta typos b/v frecuentes en español peruano: tubo/obtubo/obtubieron
     re.compile(
-        r"\bcu[aá]ntos?\s+votos?\s+(?:en\s+total\s+|fue\s+que\s+|se\s+)?(?:tuvo|tuvieron|tubo|tubieron|sac[oó]|sacaron|tiene|tienen|obtuvo|obtuvieron|obtubo|obtubieron|gan[oó]|ganaron|logr[oó]|lograron|consigui[oó]|consiguieron|recibi[oó]|recibieron|junt[oó]|juntaron|lleva|llevan|lleba|lleban|llev[oó]|llevaron|acumula|acumulan|acumul[oó]|sum[oó]|sumaron|lleg[oó]|llegaron|alcanz[oó]|alcanzaron|adjudic[oó]|capt[oó]|captaron|hizo|hicieron)\s+(.+?)(?:\s+(?:en|a\s+nivel|para)\b.*)?$",
+        r"\bcu[aá]ntos?\s+votos?\s+(?:en\s+total\s+|fue\s+que\s+|se\s+)?(?:tuvo|tuvieron|tubo|tubieron|sac[oó]|sacaron|tiene|tienen|obtuvo|obtuvieron|obtubo|obtubieron|gan[oó]|ganaron|logr[oó]|lograron|consigui[oó]|consiguieron|recibi[oó]|recibieron|junt[oó]|juntaron|lleva|llevan|lleba|lleban|llev[oó]|llevaron|acumula|acumulan|acumul[oó]|sum[oó]|sumaron|lleg[oó]|llegaron|alcanz[oó]|alcanzaron|adjudic[oó]|capt[oó]|captaron|hizo|hicieron|reuni[oó]|reunieron)\s+(.+?)(?:\s+(?:en|a\s+nivel|para)\b.*)?$",
         re.IGNORECASE,
     ),
     # "cuánto sacó/obtuvo X" / "que porcentaje obtuvo X" — también plural "cuántos"
@@ -886,6 +886,8 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "ingles", "frances", "idioma", "traducir", "traduccion",
             "plato", "comida", "gastronomia", "receta", "ingredientes",
             "mundial", "campeonato", "torneo", "copa", "deporte", "futbol", "olimpiadas",
+            "planeta", "planetas", "sistema solar", "estrella", "galaxia", "universo",
+            "independencia", "liberacion", "fundacion", "constitucion", "historia",
         })
         # "tiempo" alone is ambiguous; only block if paired with weather words
         # "cuanto vale" = pricing query → non-electoral
@@ -1042,11 +1044,12 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             _mstart, _mend = mesa_match.start(1), mesa_match.end(1)
             _before = q[max(0, _mstart - 8):_mstart].lower()
             _after = q[_mend:_mend + 7].lower()
+            _has_voto_context = "voto" in _norm(q) or "votos" in _norm(q)
             if (
                 _after.lstrip().startswith("voto")
                 or re.search(r"\bde\s*$", _before)
-                or re.search(r"\bentre\s*$", _before)  # "entre X y Y votos"
-                or re.search(r"\by\s*$", _before)      # "X y N votos" (rango)
+                or (re.search(r"\bentre\s*$", _before) and _has_voto_context)  # "entre X y Y votos"
+                or (re.search(r"\by\s*$", _before) and _has_voto_context)      # "X y N votos" (rango)
             ):
                 mesa_match = None
         # Normalizar puntuación especial para mejorar pattern matching
@@ -1462,6 +1465,9 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             or re.search(r"\bdesde\s+(?:el\s+|la\s+)?(\d{4,6})\s+(?:hasta|al)\s+(?:el\s+|la\s+)?\d{4,6}\b", q_norm)
             or re.search(r"\b(\d{4,6})\s+hasta\s+\d{4,6}\b", q_norm)
         )
+        # Treat queries with explicit numeric range as if they have "mesa" context
+        if not _has_mesa and _numeric_range_m and mesa_match:
+            _has_mesa = True
         _has_performance = "primero" in q_norm or "primer " in q_norm or "gano" in q_norm
         # "mesas XXXX" en plural con performance → prefijo, no mesa individual
         _has_plural_mesa_prefix = bool(
