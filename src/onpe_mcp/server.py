@@ -129,6 +129,11 @@ _CANDIDATE_VOTE_PATTERNS = [
         r"\bvotaron?\s+(?:por|a\s+favor\s+de)\s+([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,35}?)(?:\s+(?:en|a\s+nivel)\b.*)?$",
         re.IGNORECASE,
     ),
+    # "votos a favor de NAME" / "cuantos votos a favor de NAME"
+    re.compile(
+        r"\bvotos?\s+a\s+favor\s+de\s+([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,35}?)(?:\s+(?:en|a\s+nivel)\b.*)?$",
+        re.IGNORECASE,
+    ),
     # "resultados de X" / "resultados nacionales de X" / "puntaje de X" / "resultados del X" / "resultados para X"
     re.compile(
         r"\b(?:result(?:ados?|[oó])(?:\s+\w+)?\s+(?:de|del|para)|puntaje\s+(?:de|del))\s+(.+?)(?:\s+(?:en|a\s+nivel|total|nacional)\b.*)?$",
@@ -955,6 +960,13 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "vuelo", "vuelos", "aerolinea", "aerolineas", "pasaje", "pasajes",
             "champions", "liga europea", "liga espanola", "formula uno", "nba",
             "real madrid", "barcelona", "chelsea", "arsenal", "manchester",
+            # Economía laboral
+            "sueldo", "salario", "remuneracion", "salario minimo", "sueldo minimo",
+            "pension", "jubilacion", "bonificacion", "gratificacion",
+            # Fauna / flora / naturaleza
+            "animales", "plantas", "fauna", "flora", "especies", "biodiversidad",
+            "mamiferos", "aves", "reptiles", "anfibios", "peces", "insectos",
+            "bosque", "selva tropical", "ecosistema",
             # Economía / estadísticas no electorales
             "pib", "gdp", "inflacion", "inflación", "economia", "economía",
             "desempleo", "desocupacion", "pobreza", "recesion", "devaluacion",
@@ -1594,6 +1606,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             or "sacaron mas" in q_norm or "quienes sacaron" in q_norm
             or "quien saco mas" in q_norm or "mas votos" in q_norm
             or "obtuvo mas" in q_norm or "quien mas" in q_norm
+            or "jalaron mas" in q_norm or "jalo mas" in q_norm
         )
         # "mesas XXXX" en plural con performance → prefijo, no mesa individual
         _has_plural_mesa_prefix = bool(
