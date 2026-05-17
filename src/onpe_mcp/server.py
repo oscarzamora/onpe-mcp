@@ -113,7 +113,7 @@ _CANDIDATE_VOTE_PATTERNS = [
         r"^(.+?)\s+cu[aá]ntos?\s+votos?(?:\s+(?:sac[oó]|tuvo|tiene|obtuvo))?",
         re.IGNORECASE,
     ),
-    # Bare "NAME en GEO" / "NAME en GEO?" — fallback for queries without verb
+    # Bare "NAME en GEO" / "NAME en GEO?" — fallback for queries sin verbo
     re.compile(
         r"^([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{2,40}?)\s+en\s+\w",
         re.IGNORECASE,
@@ -123,9 +123,14 @@ _CANDIDATE_VOTE_PATTERNS = [
         r"^([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,30}?)\s+[A-Za-záéíóúñÁÉÍÓÚÑ]{3,}\s+(?:votos?|resultados?|porcentaje|datos?)\b",
         re.IGNORECASE,
     ),
-    # "NAME votos en GEO" — candidate name before "votos en"
+    # "NAME votos en GEO" — candidate name (≤3 words) before "votos en"
     re.compile(
         r"^([A-Za-záéíóúñÁÉÍÓÚÑ]+(?:\s+[A-Za-záéíóúñÁÉÍÓÚÑ]+){0,2})\s+votos?\s+en\s+\w",
+        re.IGNORECASE,
+    ),
+    # "candidato NAME en GEO" / "candidato NAME" — explicit candidate label
+    re.compile(
+        r"\bcandidato\s+([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{2,40}?)(?:\s+(?:en|a\s+nivel)\b.*)?$",
         re.IGNORECASE,
     ),
 ]
@@ -152,7 +157,7 @@ _CANDIDATE_CULTURAL_ALIASES: dict[str, str] = {
 # Ej: "resultados de peruanos en Argentina" → "peruanos" no es candidato.
 _NON_CANDIDATE_EXPRESSIONS: frozenset[str] = frozenset({
     "peruanos", "peruanas", "ciudadanos", "ciudadanas", "electores",
-    "votantes", "personas", "residentes", "extranjeros", "candidatos",
+    "votantes", "personas", "residentes", "extranjeros", "candidatos", "candidato",
     "todos", "nadie", "alguien",
     # Stop words que aparecen antes de "en" en queries geo puras
     "resultados", "resultado", "top", "primero", "primer", "segundo",
@@ -1362,7 +1367,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         # Urresti, Sánchez no se confundan con distritos RENIEC, y para que
         # "cuántos votos sacó Keiko a nivel nacional" no active el bloque nacional.
         _candidate_from_pattern_early: str | None = None
-        if "candidato" not in q_norm and "mesa" not in q_norm:
+        if "mesa" not in q_norm:
             for _vp in _CANDIDATE_VOTE_PATTERNS:
                 _vm = _vp.search(q)
                 if _vm:
@@ -1601,9 +1606,11 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "podio electoral", "podio", "lideres electorales",
             "ranking nacional", "ranking en peru",
             "resultados generales", "resultados electorales generales",
-            "resultados totales",
+            "resultados totales", "resultados finales",
+            "resultados de la eleccion", "resultado de la eleccion",
             "todos los resultados", "ver todos los resultados",
             "todos los candidatos",
+            "ganadores de", "ganadores en la", "quienes ganaron",
         }
         _is_national = any(p in q_norm for p in _NATIONAL_PHRASES)
         if not _is_national and re.search(r"\b(top\s*\d*|\d+\s+primeros?|primeros?\s+\d+)\b", q_norm) and (
@@ -1622,6 +1629,9 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                 _is_national = True
         # "candidatos" sin geo → nacional (ej: "cuántos candidatos se presentaron")
         if not _is_national and "candidatos" in q_norm and not re.search(r"\ben\s+\w", q_norm):
+            _is_national = True
+        # "primera vuelta" / "segunda vuelta" sin geo explícita → nacional
+        if not _is_national and re.search(r"\b(?:primera|segunda)\s+vuelta\b", q_norm) and not re.search(r"\ben\s+\w", q_norm):
             _is_national = True
 
         if _is_national:
