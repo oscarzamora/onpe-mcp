@@ -71,9 +71,9 @@ _CANDIDATE_VOTE_PATTERNS = [
         r"\bcu[aá]ntos?\s+votos?\s+(?:en\s+total\s+)?(?:tuvo|tuvieron|tubo|tubieron|sac[oó]|sacaron|tiene|tienen|obtuvo|obtuvieron|obtubo|obtubieron|gan[oó]|ganaron|logr[oó]|lograron|consigui[oó]|consiguieron|recibi[oó]|recibieron|junt[oó]|juntaron)\s+(.+?)(?:\s+(?:en|a\s+nivel|para)\b.*)?$",
         re.IGNORECASE,
     ),
-    # "cuánto sacó/obtuvo/logró/llevó/anotó/juntó X" (sin "votos")
+    # "cuánto sacó/obtuvo/logró/llevó/anotó/juntó X" (sin "votos") — también plural "cuántos"
     re.compile(
-        r"\bcu[aá]nto\s+(?:sac[oó]|obtuvo|logr[oó]|llev[oó]|anot[oó]|junt[oó]|consigui[oó]|recibi[oó]|tiene)\s+(.+?)(?:\s+(?:en|a\s+nivel|total|en\s+total)\b.*)?$",
+        r"\bcu[aá]ntos?\s+(?:sac[oó]|obtuvo|logr[oó]|llev[oó]|anot[oó]|junt[oó]|consigui[oó]|recibi[oó]|tiene)\s+(.+?)(?:\s+(?:en|a\s+nivel|total|en\s+total)\b.*)?$",
         re.IGNORECASE,
     ),
     # "votos de X" / "votos totales de X" / "número de votos de X"
@@ -197,6 +197,8 @@ _NON_CANDIDATE_EXPRESSIONS: frozenset[str] = frozenset({
     # Palabras electorales que NO son nombres de candidato
     "elecciones", "eleccion", "comicios", "sufragio",
     "congreso", "asamblea", "parlamento",
+    "vuelta", "primera vuelta", "segunda vuelta",  # ej: "resultados de segunda vuelta en Piura"
+    "tanto", "ambos", "ambas",  # ej: "tanto Keiko como Aliaga"
     # Palabras geográficas que no son nombres de candidato
     "region", "departamento", "provincia", "distrito", "localidad", "municipio",
     "municipalidad",
@@ -221,7 +223,8 @@ _MULTI_CANDIDATE_PATTERN = re.compile(
     r"|\b(.+?)\s+o\s+(.+?)\s+(?:quien|cu[aá]l|cu[aá]ntos?)\s+(?:sac[oó]|tuvo|obtuvo|tiene|tiene\s+m[aá]s)"
     r"|\bquien\s+(?:sac[oó]|tuvo|obtuvo|tiene)\s+m[aá]s\s+(.+?)\s+o\s+(.+?)(?:\?|$)"
     r"|\b(.+?)\s+cu[aá]ntos?\s+votos?\s+(?:y|e)\s+(.+?)\s+cu[aá]ntos?\s+votos?"
-    r"|\b(?:si\s+)?(.+?)\s+(?:le\s+)?gan[oó]\s+(?:a|contra)\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$",
+    r"|\b(?:si\s+)?(.+?)\s+(?:le\s+)?gan[oó]\s+(?:a|contra)\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
+    r"|\btanto\s+(.+?)\s+como\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$",
     re.IGNORECASE,
 )
 
@@ -2014,8 +2017,18 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             for _vp in _CANDIDATE_VOTE_PATTERNS:
                 _vm = _vp.search(q)
                 if _vm:
-                    _candidate_from_pattern = _vm.group(1).strip()
-                    break
+                    _late_cand = _vm.group(1).strip()
+                    _late_n = _norm(_late_cand)
+                    _late_w = set(_late_n.split())
+                    if (
+                        _late_n not in _NON_CANDIDATE_EXPRESSIONS
+                        and not _late_n.startswith("en ")
+                        and not _late_n.startswith("a nivel")
+                        and len(_late_n.strip()) >= 3
+                        and not (_late_w & _NON_CANDIDATE_EXPRESSIONS)
+                    ):
+                        _candidate_from_pattern = _late_cand
+                        break
 
         if "candidato" in q_norm or _candidate_from_pattern:
             # Priorizar el nombre extraído por patrón sobre la query completa
