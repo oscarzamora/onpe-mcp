@@ -826,10 +826,17 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         _q_norm_guard = _norm(q)
         _NON_ELECTORAL_TOKENS = frozenset({
             "dolar", "euro", "libra", "yen", "precio", "costo", "coste",
-            "gasolina", "petroleo", "gas", "temperatura", "clima", "tiempo",
+            "gasolina", "petroleo", "gas", "temperatura", "clima",
             "tipo de cambio", "cotizacion", "bitcoin", "criptomoneda",
+            "llover", "lluvia", "lluvias", "llueve", "calor", "frio", "viento",
+            "trafico", "congestion", "accidente", "noticias", "noticia",
         })
-        if _NON_ELECTORAL_TOKENS & set(_q_norm_guard.split()) and not any(
+        # "tiempo" alone is ambiguous (also = "time"); only block if paired with weather words
+        _has_weather = bool(
+            _NON_ELECTORAL_TOKENS & set(_q_norm_guard.split())
+            or ("tiempo" in _q_norm_guard and any(w in _q_norm_guard for w in ("hoy", "manana", "clima", "llov")))
+        )
+        if _has_weather and not any(
             kw in _q_norm_guard for kw in (
                 "voto", "votos", "eleccion", "resultado", "candidato", "mesa",
                 "senador", "diputado", "congresista", "partido"
@@ -1301,7 +1308,9 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "arranc", "empiez", "prefij", "comienz", "comenz", "inicia", "partir",
         }
         _has_mesa = "mesa" in q_norm
-        _has_range = any(w in q_norm for w in _RANGE_INDICATOR_WORDS)
+        # También detectar rango numérico explícito "X a Y" (ej: "900100 a 900200")
+        _numeric_range_m = re.search(r"\b(\d{4,6})\s+a\s+\d{4,6}\b", q_norm)
+        _has_range = any(w in q_norm for w in _RANGE_INDICATOR_WORDS) or bool(_numeric_range_m)
         _has_performance = "primero" in q_norm or "primer " in q_norm or "gano" in q_norm
         if _has_mesa and _has_range and _has_performance:
             mesa_prefix = extract_mesa_prefix_claim(q)
