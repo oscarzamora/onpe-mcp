@@ -19,6 +19,72 @@ def _norm_text(text: str) -> str:
     return "".join(ch for ch in base if not unicodedata.combining(ch)).casefold().strip()
 
 
+# Mapa de nombres populares de ciudades peruanas → nombres administrativos oficiales en ubigeo_reniec.
+# Clave: nombre normalizado (sin tildes, minúsculas). Valor: nombre de provincia o departamento.
+_CITY_ALIASES: dict[str, str] = {
+    # Ucayali
+    "pucallpa": "coronel portillo",
+    # Loreto
+    "iquitos": "maynas",
+    "yurimaguas": "alto amazonas",
+    "nauta": "loreto",
+    # San Martín
+    "tarapoto": "san martin",
+    "moyobamba": "moyobamba",
+    # Madre de Dios
+    "puerto maldonado": "tambopata",
+    # Amazonas
+    "chachapoyas": "chachapoyas",
+    # La Libertad
+    "trujillo": "trujillo",
+    # Lambayeque
+    "chiclayo": "chiclayo",
+    "lambayeque": "lambayeque",
+    # Piura
+    "piura": "piura",
+    "sullana": "sullana",
+    "tumbes": "tumbes",
+    # Ancash
+    "chimbote": "santa",
+    "huaraz": "huaraz",
+    # Lima
+    "lima": "lima",
+    "callao": "callao",
+    # Ica
+    "ica": "ica",
+    "nazca": "nazca",
+    # Arequipa
+    "arequipa": "arequipa",
+    # Moquegua
+    "moquegua": "mariscal nieto",
+    # Tacna
+    "tacna": "tacna",
+    # Puno
+    "puno": "puno",
+    "juliaca": "san roman",
+    # Cusco
+    "cusco": "cusco",
+    "cuzco": "cusco",
+    # Apurimac
+    "abancay": "abancay",
+    "andahuaylalas": "andahuaylas",
+    # Ayacucho
+    "ayacucho": "huamanga",
+    "huamanga": "huamanga",
+    # Huancavelica
+    "huancavelica": "huancavelica",
+    # Junin
+    "huancayo": "huancayo",
+    # Pasco
+    "cerro de pasco": "pasco",
+    # Huanuco
+    "huanuco": "huanuco",
+    # Cajamarca
+    "cajamarca": "cajamarca",
+    "jaen": "jaen",
+}
+
+
 class DataStore:
     def __init__(self, data_dir: Path) -> None:
         self.data_dir = data_dir
@@ -170,6 +236,20 @@ class DataStore:
                 CREATE INDEX IF NOT EXISTS idx_reniec_dept_norm ON ubigeo_reniec (departamento_norm);
                 CREATE INDEX IF NOT EXISTS idx_reniec_prov_norm ON ubigeo_reniec (provincia_norm);
                 CREATE INDEX IF NOT EXISTS idx_reniec_dist_norm ON ubigeo_reniec (distrito_norm);
+
+                CREATE TABLE IF NOT EXISTS ubigeo_onpe_api (
+                    ubigeo TEXT PRIMARY KEY,
+                    distrito TEXT,
+                    provincia TEXT,
+                    departamento TEXT,
+                    distrito_norm TEXT,
+                    provincia_norm TEXT,
+                    departamento_norm TEXT,
+                    fetched_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_onpe_api_dept_norm ON ubigeo_onpe_api (departamento_norm);
+                CREATE INDEX IF NOT EXISTS idx_onpe_api_prov_norm ON ubigeo_onpe_api (provincia_norm);
+                CREATE INDEX IF NOT EXISTS idx_onpe_api_dist_norm ON ubigeo_onpe_api (distrito_norm);
                 """
             )
 
@@ -1448,53 +1528,82 @@ class DataStore:
         return [str(row["ubigeo"]) for row in rows if row["ubigeo"]]
 
     def find_domestic_ubigeos_by_geo_name(self, query: str) -> tuple[str, list[str]] | None:
-        """Busca ubigeos en ubigeo_reniec (departamento > provincia > distrito).
-        Retorna (nombre_geo, lista_ubigeos) o None si la tabla está vacía o sin coincidencias.
-        Primero prueba el query completo; si no encuentra, prueba token a token
-        para soportar consultas como 'mesas en Pachacamac top 3'."""
+        """Busca ubigeos en ubigeo_reniec + ubigeo_onpe_api (departamento > provincia > distrito).
+        Retorna (nombre_geo, lista_ubigeos) o None si no se encuentran coincidencias.
+        Primero resuelve alias de ciudades populares (pucallpa → coronel portillo, etc.),
+        luego prueba el query completo y por tokens."""
         q_norm = _norm_text(query)
         if not q_norm:
             return None
+
+        # 0. Alias de ciudad popular → nombre administrativo oficial
+        alias_term = _CITY_ALIASES.get(q_norm)
+        if alias_term is None:
+            # Intentar encontrar alias dentro de tokens del query
+            for word in sorted(q_norm.split(), key=len, reverse=True):
+                if word in _CITY_ALIASES:
+                    alias_term = _CITY_ALIASES[word]
+                    break
+
         with self._connect() as conn:
-            count_row = conn.execute("SELECT COUNT(*) AS c FROM ubigeo_reniec").fetchone()
-            if not count_row or int(count_row["c"] or 0) == 0:
+            # Verificar si las tablas tienen datos
+            count_reniec = int(
+                (conn.execute("SELECT COUNT(*) AS c FROM ubigeo_reniec").fetchone() or {"c": 0})["c"]
+            )
+            count_onpe = int(
+                (conn.execute("SELECT COUNT(*) AS c FROM ubigeo_onpe_api").fetchone() or {"c": 0})["c"]
+            )
+            if count_reniec == 0 and count_onpe == 0:
                 return None
 
-            def _search(term: str) -> tuple[str, list[str]] | None:
-                # For short tokens (<6 chars) use prefix match to avoid false positives
-                # e.g. "saco" would match "piSACOma" with substring, but not with prefix
+            def _search_table(table: str, term: str) -> tuple[str, list[str]] | None:
                 like_sub = f"%{term}%" if len(term) >= 6 else f"{term}%"
                 rows = conn.execute(
-                    "SELECT ubigeo, departamento FROM ubigeo_reniec WHERE departamento_norm LIKE ? LIMIT 2000",
+                    f"SELECT ubigeo, departamento FROM {table} WHERE departamento_norm LIKE ? LIMIT 2000",
                     (like_sub,),
                 ).fetchall()
                 if rows:
                     return str(rows[0]["departamento"]).lower(), [str(r["ubigeo"]).lstrip("0") for r in rows]
                 rows = conn.execute(
-                    "SELECT ubigeo, provincia FROM ubigeo_reniec WHERE provincia_norm LIKE ? LIMIT 2000",
+                    f"SELECT ubigeo, provincia FROM {table} WHERE provincia_norm LIKE ? LIMIT 2000",
                     (like_sub,),
                 ).fetchall()
                 if rows:
                     return str(rows[0]["provincia"]).lower(), [str(r["ubigeo"]).lstrip("0") for r in rows]
                 rows = conn.execute(
-                    "SELECT ubigeo, distrito FROM ubigeo_reniec WHERE distrito_norm LIKE ? LIMIT 500",
+                    f"SELECT ubigeo, distrito FROM {table} WHERE distrito_norm LIKE ? LIMIT 500",
                     (like_sub,),
                 ).fetchall()
                 if rows:
                     return str(rows[0]["distrito"]).lower(), [str(r["ubigeo"]).lstrip("0") for r in rows]
                 return None
 
-            # 1. Intento con el query completo normalizado
+            def _search(term: str) -> tuple[str, list[str]] | None:
+                if count_reniec > 0:
+                    result = _search_table("ubigeo_reniec", term)
+                    if result:
+                        return result
+                if count_onpe > 0:
+                    result = _search_table("ubigeo_onpe_api", term)
+                    if result:
+                        return result
+                return None
+
+            # 1. Si hay un alias de ciudad conocida, usar ese término directamente
+            if alias_term:
+                result = _search(alias_term)
+                if result:
+                    return result
+
+            # 2. Intento con el query completo normalizado
             result = _search(q_norm)
             if result:
                 return result
 
-            # 2. Fallback: probar tokens individuales (≥4 chars), más largos primero
+            # 3. Fallback: probar tokens individuales (≥4 chars), más largos primero
             _STOPWORDS = {
-                # artículos, preposiciones, conjunciones
                 "dame", "de", "del", "el", "en", "es", "la", "las", "los",
                 "para", "que", "quienes", "son", "hay", "quien", "una", "uno",
-                # verbos y sustantivos electorales comunes
                 "mesas", "resumen", "top", "fueron", "gano", "cuantas", "cuanto",
                 "saco", "votos", "voto", "nivel", "total", "suma", "dato", "gana",
                 "vote", "nacional", "ganador", "ganaron", "obtuvo",
@@ -1511,6 +1620,46 @@ class DataStore:
                 if result:
                     return result
         return None
+
+    def upsert_domestic_ubigeos_from_api(self, rows: list[dict[str, str]]) -> int:
+        """Inserta o actualiza ubigeos domésticos obtenidos de la API ONPE en ubigeo_onpe_api.
+        Cada fila debe tener: ubigeo, distrito, provincia, departamento."""
+        if not rows:
+            return 0
+        now = self.now_iso()
+        inserted = 0
+        with self._connect() as conn:
+            for row in rows:
+                ubigeo = str(row.get("ubigeo") or "").strip()
+                if not ubigeo:
+                    continue
+                distrito = str(row.get("distrito") or "").strip()
+                provincia = str(row.get("provincia") or "").strip()
+                departamento = str(row.get("departamento") or "").strip()
+                conn.execute(
+                    """
+                    INSERT INTO ubigeo_onpe_api (
+                        ubigeo, distrito, provincia, departamento,
+                        distrito_norm, provincia_norm, departamento_norm, fetched_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(ubigeo) DO UPDATE SET
+                        distrito=excluded.distrito,
+                        provincia=excluded.provincia,
+                        departamento=excluded.departamento,
+                        distrito_norm=excluded.distrito_norm,
+                        provincia_norm=excluded.provincia_norm,
+                        departamento_norm=excluded.departamento_norm,
+                        fetched_at=excluded.fetched_at
+                    """,
+                    (
+                        ubigeo, distrito, provincia, departamento,
+                        _norm_text(distrito), _norm_text(provincia), _norm_text(departamento),
+                        now,
+                    ),
+                )
+                inserted += 1
+        return inserted
 
     def candidate_first_places_by_mesa_prefix(
         self,

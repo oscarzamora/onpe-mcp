@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import logging
 from typing import Any
 import re
@@ -898,6 +899,38 @@ def onpe_sync_foreign_catalog(id_eleccion: int | None = None) -> dict[str, Any]:
         return error_response(str(exc), started_ms=started_ms, code="ONPE_API_ERROR")
     except Exception as exc:  # pragma: no cover
         logger.exception("Error inesperado en onpe_sync_foreign_catalog")
+        return error_response(str(exc), started_ms=started_ms)
+
+
+@mcp.tool()
+def onpe_sync_domestic_catalog(id_eleccion: int | None = None) -> dict[str, Any]:
+    """Sincroniza el catálogo completo de ubigeos domésticos (departamentos/provincias/distritos)
+    directamente desde la API ONPE hacia SQLite. Permite consultas por ciudades como Pucallpa,
+    Iquitos, Tarapoto, etc. aunque no sean nombres de distritos en RENIEC."""
+    started_ms = now_ms()
+    try:
+        election_id, rows = onpe_api.build_domestic_catalog(id_eleccion)
+        upserted = store.upsert_domestic_ubigeos_from_api(rows)
+        store.append_raw_event(
+            "onpe_sync_domestic_catalog",
+            {
+                "id_eleccion": election_id,
+                "rows": len(rows),
+                "upserted": upserted,
+            },
+        )
+        return ok_response(
+            {
+                "id_eleccion": election_id,
+                "rows": len(rows),
+                "upserted": upserted,
+            },
+            started_ms=started_ms,
+        )
+    except OnpeApiError as exc:
+        return error_response(str(exc), started_ms=started_ms, code="ONPE_API_ERROR")
+    except Exception as exc:
+        logger.exception("Error inesperado en onpe_sync_domestic_catalog")
         return error_response(str(exc), started_ms=started_ms)
 
 
@@ -2246,7 +2279,23 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                     if _expr_foreign_chk:
                         pass  # cae a bloques geo abajo
                     else:
-                        _known = ", ".join(sorted({v for v in _cand_map_early.values() if v})[:10])
+                        # Fuzzy match contra candidatos conocidos
+                        _known_names = sorted({v for v in _cand_map_early.values() if v})
+                        _expr_norm_cand = _norm(_candidate_from_pattern_early or "")
+                        _fuzzy = difflib.get_close_matches(
+                            _expr_norm_cand,
+                            [_norm(n) for n in _known_names],
+                            n=3, cutoff=0.5,
+                        )
+                        # Mapear de vuelta a nombres originales
+                        _fuzzy_names = []
+                        for _fn in _fuzzy:
+                            for _kn in _known_names:
+                                if _norm(_kn) == _fn:
+                                    _fuzzy_names.append(_kn)
+                                    break
+
+                        _known = ", ".join(_known_names[:10])
                         # Buscar sugerencia cultural (ej: "castillo" → Sánchez por sombrero)
                         _cultural_hint: str | None = None
                         _expr_for_alias = _norm(_candidate_from_pattern_early or q)
@@ -2264,17 +2313,31 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                             f"Es el candidato de 2026 también conocido por usar sombrero."
                             if _cultural_hint else ""
                         )
+                        if _fuzzy_names and not _cultural_hint:
+                            _sugerencias = " / ".join(f"**{n}**" for n in _fuzzy_names)
+                            _hint_text = f"\n💡 ¿Quisiste decir {_sugerencias}?"
+                        # Fallback cualitativo si no hay datos en DB
+                        _qualitative_notes: list[str] = []
+                        if not _aggs_early:
+                            _qualitative_notes = get_fallback_qualitative(_norm(_candidate_from_pattern_early or q))
+                        _answer_parts = [
+                            f"No encontré al candidato '{_candidate_from_pattern_early}' en los resultados "
+                            f"de las elecciones generales 2026.{_hint_text}",
+                        ]
+                        if _qualitative_notes:
+                            _answer_parts.append(
+                                " Información contextual: " + " ".join(_qualitative_notes[:2])
+                            )
+                        elif _known_names:
+                            _answer_parts.append(f" Candidatos disponibles en cache: {_known}…")
                         data = {
                             "intent": "candidate",
-                            "answer": (
-                                f"No encontré al candidato '{_candidate_from_pattern_early}' en los resultados "
-                                f"de las elecciones generales 2026.{_hint_text} "
-                                f"Algunos candidatos disponibles: {_known}…"
-                            ),
+                            "answer": "".join(_answer_parts),
                             "result": {
                                 "query": _candidate_from_pattern_early,
                                 "found": False,
                                 "cultural_hint": _cultural_hint,
+                                "sugerencias": _fuzzy_names,
                             },
                             "source": "sqlite",
                         }
@@ -2383,6 +2446,8 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "mas votados", "los mas votados", "votados", "el mas votado",
             # "candidatos con mas votos en X" → geo, no nacional
             "candidatos con mas votos", "candidatos mas votados",
+            # "top de candidatos en X" → geo
+            "top de candidatos",
             "peruanos votaron", "peruanos que votaron", "quienes votaron", "cuantos votaron",
             "acudieron a votar", "fueron a votar", "participaron en la votacion",
             "quien encabeza", "quien va arriba", "quien lidera el conteo",
@@ -2961,10 +3026,34 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                     break
 
             if chosen is None:
+                # Fuzzy match + qualitative fallback
+                _late_known_names = sorted({v for v in candidate_map.values() if v})
+                _late_expr_norm = _norm(candidate_expr or "")
+                _late_fuzzy = difflib.get_close_matches(
+                    _late_expr_norm,
+                    [_norm(n) for n in _late_known_names],
+                    n=3, cutoff=0.5,
+                )
+                _late_fuzzy_names = []
+                for _lfn in _late_fuzzy:
+                    for _lkn in _late_known_names:
+                        if _norm(_lkn) == _lfn:
+                            _late_fuzzy_names.append(_lkn)
+                            break
+                _late_qualitative = get_fallback_qualitative(_late_expr_norm) if not aggregates else []
+                _late_hint = ""
+                if _late_fuzzy_names:
+                    _late_hint = " ¿Quisiste decir " + " / ".join(f"**{n}**" for n in _late_fuzzy_names) + "?"
+                elif _late_known_names:
+                    _late_hint = " Candidatos en cache: " + ", ".join(_late_known_names[:8]) + "…"
+                _late_ctx = (" Contexto: " + " ".join(_late_qualitative[:2])) if _late_qualitative else ""
                 data = {
                     "intent": "candidate",
-                    "answer": f"No encontré coincidencia para candidato '{candidate_expr}'.",
-                    "result": {"query": candidate_expr},
+                    "answer": (
+                        f"No encontré coincidencia para '{candidate_expr}' en los resultados "
+                        f"de las elecciones generales 2026.{_late_hint}{_late_ctx}"
+                    ),
+                    "result": {"query": candidate_expr, "sugerencias": _late_fuzzy_names},
                     "source": "sqlite",
                 }
                 return ok_response(data, started_ms=started_ms)

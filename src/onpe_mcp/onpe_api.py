@@ -339,6 +339,33 @@ class OnpeApiClient:
         rows.sort(key=lambda item: (item["Continente"], item["pais"], item["ciudad"]))
         return current_election, rows
 
+    def build_domestic_catalog(self, election_id: int | None = None) -> tuple[int, list[dict[str, str]]]:
+        """Construye el catálogo completo de ubigeos domésticos desde la API ONPE.
+        Retorna (id_eleccion, lista de dicts con ubigeo/departamento/provincia/distrito).
+        Itera: departamentos → provincias → distritos."""
+        current_election = election_id or self.get_active_election_id()
+        rows: list[dict[str, str]] = []
+
+        departments = self.list_level1_domestic(current_election)
+        for dept in departments:
+            dept_nombre = str(dept.nombre).strip()
+            provinces = self.list_provinces(current_election, dept.ubigeo, ambito=1)
+            for prov in provinces:
+                prov_nombre = str(prov.nombre).strip()
+                districts = self.list_ubigeo_districts(current_election, prov.ubigeo, ambito=1)
+                for dist in districts:
+                    rows.append(
+                        {
+                            "ubigeo": str(dist.ubigeo).strip(),
+                            "departamento": dept_nombre,
+                            "provincia": prov_nombre,
+                            "distrito": str(dist.nombre).strip(),
+                        }
+                    )
+
+        rows.sort(key=lambda item: item["ubigeo"])
+        return current_election, rows
+
     def resolve_location_by_ubigeo(
         self,
         ubigeo: str,
