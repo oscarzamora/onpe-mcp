@@ -858,6 +858,15 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                 started_ms=started_ms,
             )
 
+        # Detectar preguntas matemáticas / aritméticas → unknown
+        if re.search(r"\bcu[aá]nto\s+es\b|\bcuanto\s+vale\b|\bcuantos\s+son\b", _q_norm_guard) and re.search(r"\d", _q_norm_guard) and not any(
+            kw in _q_norm_guard for kw in ("voto", "votos", "eleccion", "candidato", "mesa")
+        ):
+            return ok_response(
+                {"intent": "unknown", "answer": "Esa no es una consulta electoral. Pregúntame sobre votos, candidatos o resultados electorales del Perú 2026."},
+                started_ms=started_ms,
+            )
+
         # ── Guard: DB no hidratada ──────────────────────────────────────────
         try:
             _total_mesas = store.total_mesas_local()
@@ -1857,9 +1866,11 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         _GEO_IN_Q = re.search(
             r"\b(?:en|de)\s+(?:(?:el|la|los|las)\s+)?(?!\d)"
             r"(?!(?:el|la|los|las|un|una|unos|unas"
+            r"|este|esta|esto|estos|estas|ese|esa|eso|esos|esas|aquel|aqui|ahi|alla"
             r"|todos?|todas?|cada|alguno?|ninguno?|cualquier|la\s+eleccion|candidatos?"
             r"|votos?|voto|porcentaje|datos?|resultado|resultados|informacion|info"
             r"|blanco|nulos?|viciados?|blancos|invalidos?|total|totales|general|generales"
+            r"|norte|sur|este|oeste|centro|oriente|occidente|sierra|selva|costa"
             r"|primera|segunda|tercera|primera|primer|segundo|tercer|tercero|cuarta|quinto"
             r"|vuelta|turno|ronda|siguiente|anterior"
             r"|eleccion|elecciones|elecci[oó]n|electoral|electorales"
@@ -1909,6 +1920,9 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             _is_national = True
         # "quien salió en primer/segundo lugar" → ranking nacional sin geo
         if not _is_national and re.search(r"\b(?:quien|quienes?)\s+(?:sali[oó]|qued[oó]|result[oó])\s+en\s+(?:primer|segundo|tercer|cuarto|quinto)\b", q_norm) and not _GEO_IN_Q:
+            _is_national = True
+        # "que paso en las elecciones" / "que ocurrio en las elecciones" → nacional
+        if not _is_national and re.search(r"\b(?:qu[eé]|como)\s+(?:pas[oó]|ocurri[oó]|result[oó]|fue)\s+en\s+(?:las?\s+)?elecci[oó]nes?\b", q_norm):
             _is_national = True
         # "quienes ganaron/superaron/consiguieron" sin geo → nacional; con "en PLACE" → geo_domestic
         if not _is_national and re.search(r"\bquienes?\s+(?:son\s+(?:los\s+)?)?(?:gan[ao]ron?|lider(?:es)?|superaron|consiguieron|obtuvieron|tuvieron)\b", q_norm):
