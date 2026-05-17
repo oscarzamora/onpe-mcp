@@ -2310,6 +2310,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         if not _is_national and re.search(r"\bm[aá]s\s+votos\b", q_norm) and "candidatos" in q_norm and not _GEO_IN_Q:
             _is_national = True
         # "dame el top 5" / "top 3" sin contexto geográfico → nacional
+        # (pero no si hay un departamento en la consulta, ej: "top 3 Ica")
         if not _is_national and re.search(r"\btop\s+\d+\b", q_norm) and not _GEO_IN_Q:
             _is_national = True
         # "todos/todas" + (candidatos|resultados|votos|regiones) sin geo específico → nacional
@@ -2318,6 +2319,9 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                 _is_national = True
         # Check simple: ¿algún departamento peruano conocido en la consulta?
         _dept_name_in_q = any(re.search(r"\b" + re.escape(d) + r"\b", q_norm) for d in _PERU_DEPTS)
+        # Si _is_national fue activado por "top N" pero hay un dept en la consulta → ceder a geo
+        if _is_national and _dept_name_in_q and not any(p in q_norm for p in _NATIONAL_PHRASES):
+            _is_national = False
         # "candidatos/candidato" sin geo → nacional (ej: "cuántos candidatos se presentaron")
         if not _is_national and re.search(r"\bcandidatos?\b", q_norm) and not _GEO_IN_Q and not _dept_name_in_q:
             _is_national = True
