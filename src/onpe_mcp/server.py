@@ -154,7 +154,7 @@ _NON_CANDIDATE_EXPRESSIONS: frozenset[str] = frozenset({
 _MULTI_CANDIDATE_PATTERN = re.compile(
     r"\bvotos?\s+(?:de\s+)?(.+?)\s+(?:y|e)\s+(.+?)(?:\s+(?:en|a\s+nivel|total)\b.*)?$"
     r"|\b(.+?)\s+y\s+(.+?)\s+cu[aá]ntos?\s+votos?"
-    r"|\bcomparar?\s+(?:votos?\s+(?:de\s+)?)?(.+?)\s+(?:y|con)\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
+    r"|\bcomparar?\s+(?:a\s+)?(?:votos?\s+(?:de\s+)?)?(.+?)\s+(?:y|con)\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\b([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,40}?)\s+y\s+([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,40}?)\s+en\b",
     re.IGNORECASE,
 )
@@ -1342,9 +1342,19 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                 _mc_groups = [g.strip() for g in _mc_m.groups() if g and g.strip()]
                 if len(_mc_groups) >= 2:
                     _multi_candidates = _mc_groups[:2]
-        # Strip trailing "en PLACE" from candidate names (e.g. "Keiko en Arequipa" → "Keiko")
+        elif _candidate_from_pattern_early and re.search(r"\s+con\s+", _candidate_from_pattern_early, re.IGNORECASE):
+            # "comparar a X con Y" — el patrón bare capturó toda la expr antes de "en"
+            _mc_m2 = _MULTI_CANDIDATE_PATTERN.search(q)
+            if _mc_m2:
+                _mc_groups2 = [g.strip() for g in _mc_m2.groups() if g and g.strip()]
+                if len(_mc_groups2) >= 2:
+                    _multi_candidates = _mc_groups2[:2]
+                    _candidate_from_pattern_early = None
+        # Strip trailing "en PLACE" and leading stop-words from candidate names
+        # e.g. "Keiko en Arequipa" → "Keiko", "votos Nieto" → "Nieto"
+        _CAND_LEAD_STRIP = re.compile(r"^(?:votos?\s+|dame\s+|los?\s+votos?\s+(?:de\s+)?)", re.IGNORECASE)
         _multi_candidates = [
-            re.sub(r"\s+en\s+\S.*$", "", c, flags=re.IGNORECASE).strip()
+            _CAND_LEAD_STRIP.sub("", re.sub(r"\s+en\s+\S.*$", "", c, flags=re.IGNORECASE)).strip()
             for c in _multi_candidates
         ]
 
@@ -1521,6 +1531,8 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "a nivel nacional", "todo el peru", "a nivel del peru",
             "nivel nacional", "todo peru", "en el peru", "resultados nacionales",
             "a nivel de peru", "peru entero", "todo el pais",
+            "quien gano las elecciones", "quien fue el ganador",
+            "top candidatos", "top de candidatos",
         }
         _is_national = any(p in q_norm for p in _NATIONAL_PHRASES)
         if not _is_national and re.search(r"\b(top|primeros?\s+\d+)\b", q_norm) and (
@@ -1546,7 +1558,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             else:
                 _nat_ans = "No hay votos consolidados en el cache local todavía."
             data = {
-                "intent": "geo_domestic",
+                "intent": "nacional",
                 "answer": _nat_ans,
                 "result": {"scope": "nacional", "top": _nat_top, "total_votos": _nat_total, "mesas": _nat_mesas},
                 "source": "sqlite",
