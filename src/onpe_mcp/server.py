@@ -138,6 +138,16 @@ _CANDIDATE_VOTE_PATTERNS = [
         r"^votos?\s+([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,35})$",
         re.IGNORECASE,
     ),
+    # "NAME resultados" — reversed order (resultados after name)
+    re.compile(
+        r"^([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,35})\s+resultados?$",
+        re.IGNORECASE,
+    ),
+    # "NAME qué tal / cómo le fue" — coloquial candidate inquiry
+    re.compile(
+        r"^([A-Za-záéíóúñÁÉÍÓÚÑ]+(?:\s+[A-Za-záéíóúñÁÉÍÓÚÑ]+){0,2})\s+(?:qu[eé]\s+tal|c[oó]mo\s+(?:le\s+)?(?:fue|quedo|qued[oó]|va))\b",
+        re.IGNORECASE,
+    ),
 ]
 
 # Aliases culturales/coloquiales para candidatos.
@@ -187,6 +197,7 @@ _NON_CANDIDATE_EXPRESSIONS: frozenset[str] = frozenset({
     # Pronombres y verbos coloquiales que no son nombres de candidato
     "me", "oye", "cuanto", "cuantos", "cual", "cuales",
     "puedes", "puede", "puedo", "podria", "dime", "sabes", "sabe", "entiendo",
+    "paso", "paso en",  # verbo "pasó" coloquial en preguntas geográficas
 })
 
 # Patrón para detectar consultas multi-candidato: "X y Y" o "X e Y"
@@ -314,6 +325,35 @@ def _norm(text: str) -> str:
     base = unicodedata.normalize("NFKD", text or "")
     stripped = "".join(ch for ch in base if not unicodedata.combining(ch))
     return stripped.casefold().strip()
+
+
+# Muletillas verbales que se eliminan del INICIO de la query para normalizar
+# lenguaje natural antes del matching NLU.
+_FILLER_START = re.compile(
+    r"^(?:"
+    r"a\s+ver[,\s]+"
+    r"|(?:me\s+)?(?:puedes?\s+)?(?:decir|dime|cuéntame|cuentame)[,\s]+"
+    r"|(?:quiero|quisiera|necesito|podrias?\s+decirme|podrías?\s+decirme)\s+(?:saber\s+)?"
+    r"|(?:oye|oiga|escucha)[,\s]+"
+    r"|(?:por\s+favor[,\s]+)?"
+    r"|(?:sabes?\s+(?:cuantos?|cu[aá]ntos?|como|cómo)\s+)?"
+    r"|(?:dime\s+)?"
+    r"|(?:(?:me\s+)?(?:puedes?|podr[íi]as?)\s+(?:decirme\s+)?)?"
+    r")",
+    re.IGNORECASE,
+)
+# Muletillas o cortesías al FINAL
+_FILLER_END = re.compile(
+    r"(?:[,\s]+(?:por\s+favor|porfavor|gracias|please))+$",
+    re.IGNORECASE,
+)
+
+
+def _strip_filler(text: str) -> str:
+    """Elimina muletillas verbales de inicio/fin para normalizar lenguaje natural."""
+    t = _FILLER_START.sub("", text.strip())
+    t = _FILLER_END.sub("", t).strip()
+    return t if t else text.strip()
 
 
 def _geo_query_cache_key(field: str | None, expr: str, top_n: int) -> str:
@@ -790,6 +830,8 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         # Normalizar puntuación especial para mejorar pattern matching
         q = re.sub(r"[¿¡:;]", " ", q)
         q = re.sub(r"\s{2,}", " ", q).strip()
+        # Eliminar muletillas verbales del inicio/fin (normalización lenguaje natural)
+        q = _strip_filler(q)
         q_norm = _norm(q)
         top_n = extract_top_n(q, default=5, minimum=1, maximum=20)
 
@@ -1571,40 +1613,46 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                     ).fetchone()
                 _expr_is_geo = _geo_chk is not None
                 if not _expr_is_geo:
-                    _known = ", ".join(sorted({v for v in _cand_map_early.values() if v})[:10])
-                    # Buscar sugerencia cultural (ej: "castillo" → Sánchez por sombrero)
-                    _cultural_hint: str | None = None
-                    _expr_for_alias = _norm(_candidate_from_pattern_early or q)
-                    for _alias, _target in _CANDIDATE_CULTURAL_ALIASES.items():
-                        if _alias in _expr_for_alias:
-                            _hint_item = next(
-                                (it for it in _aggs_early if _target in _norm(_cand_map_early.get(str(it["partido_id"]), ""))),
-                                None,
-                            )
-                            if _hint_item:
-                                _cultural_hint = _cand_map_early.get(str(_hint_item["partido_id"]))
-                            break
-                    _hint_text = (
-                        f"\n💡 ¿Quizás te refieres a **{_cultural_hint}**? "
-                        f"Es el candidato de 2026 también conocido por usar sombrero."
-                        if _cultural_hint else ""
-                    )
-                    data = {
-                        "intent": "candidate",
-                        "answer": (
-                            f"No encontré al candidato '{_candidate_from_pattern_early}' en los resultados "
-                            f"de las elecciones generales 2026.{_hint_text} "
-                            f"Algunos candidatos disponibles: {_known}…"
-                        ),
-                        "result": {
-                            "query": _candidate_from_pattern_early,
-                            "found": False,
-                            "cultural_hint": _cultural_hint,
-                        },
-                        "source": "sqlite",
-                    }
-                    return ok_response(data, started_ms=started_ms)
-                # Si es geo, caemos al bloque geo_domestic abajo
+                    # Antes de responder "no encontrado", verificar si el nombre
+                    # coincide con un país/ciudad extranjera → fallthrough a geo.
+                    _expr_foreign_chk = store.find_foreign_ubigeos(_candidate_from_pattern_early)
+                    if _expr_foreign_chk:
+                        pass  # cae a bloques geo abajo
+                    else:
+                        _known = ", ".join(sorted({v for v in _cand_map_early.values() if v})[:10])
+                        # Buscar sugerencia cultural (ej: "castillo" → Sánchez por sombrero)
+                        _cultural_hint: str | None = None
+                        _expr_for_alias = _norm(_candidate_from_pattern_early or q)
+                        for _alias, _target in _CANDIDATE_CULTURAL_ALIASES.items():
+                            if _alias in _expr_for_alias:
+                                _hint_item = next(
+                                    (it for it in _aggs_early if _target in _norm(_cand_map_early.get(str(it["partido_id"]), ""))),
+                                    None,
+                                )
+                                if _hint_item:
+                                    _cultural_hint = _cand_map_early.get(str(_hint_item["partido_id"]))
+                                break
+                        _hint_text = (
+                            f"\n💡 ¿Quizás te refieres a **{_cultural_hint}**? "
+                            f"Es el candidato de 2026 también conocido por usar sombrero."
+                            if _cultural_hint else ""
+                        )
+                        data = {
+                            "intent": "candidate",
+                            "answer": (
+                                f"No encontré al candidato '{_candidate_from_pattern_early}' en los resultados "
+                                f"de las elecciones generales 2026.{_hint_text} "
+                                f"Algunos candidatos disponibles: {_known}…"
+                            ),
+                            "result": {
+                                "query": _candidate_from_pattern_early,
+                                "found": False,
+                                "cultural_hint": _cultural_hint,
+                            },
+                            "source": "sqlite",
+                        }
+                        return ok_response(data, started_ms=started_ms)
+                # Si es geo (doméstico o extranjero), caemos al bloque geo abajo
 
         # ── Nacional / "todo el Perú" / "a nivel nacional" ──────────────────
         # Va DESPUÉS del candidato para que "cuántos votos sacó Keiko a nivel
@@ -1626,6 +1674,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "todos los candidatos",
             "ganadores de", "ganadores en la", "quienes ganaron",
             "total de votos", "total votos", "votos por candidato",
+            "al pais", "en el pais", "todo el pais", "el pais",
         }
         _is_national = any(p in q_norm for p in _NATIONAL_PHRASES)
         if not _is_national and re.search(r"\b(top\s*\d*|\d+\s+primeros?|primeros?\s+\d+)\b", q_norm) and (
