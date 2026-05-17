@@ -101,9 +101,9 @@ _CANDIDATE_VOTE_PATTERNS = [
         r"\bqu[eé]\s+tanto\s+(?:apoyo|respaldo|votos?|porcentaje|aceptacion)\s+(?:tuvo|obtuvo|logr[oó]|recibi[oó]|sac[oó]|alcanz[oó])\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$",
         re.IGNORECASE,
     ),
-    # "resultados de X" / "resultados nacionales de X" / "puntaje de X" / "resultados del X"
+    # "resultados de X" / "resultados nacionales de X" / "puntaje de X" / "resultados del X" / "resultados para X"
     re.compile(
-        r"\b(?:result(?:ados?|[oó])(?:\s+\w+)?\s+(?:de|del)|puntaje\s+(?:de|del))\s+(.+?)(?:\s+(?:en|a\s+nivel|total|nacional)\b.*)?$",
+        r"\b(?:result(?:ados?|[oó])(?:\s+\w+)?\s+(?:de|del|para)|puntaje\s+(?:de|del))\s+(.+?)(?:\s+(?:en|a\s+nivel|total|nacional)\b.*)?$",
         re.IGNORECASE,
     ),
     # "votación de X" / "votación total de X"
@@ -273,7 +273,8 @@ _MULTI_CANDIDATE_PATTERN = re.compile(
     r"|\bcu[aá]ntos?\s+m[aá]s\s+votos?\s+(?:tuvo|sac[oó]|obtuvo|tiene|lleva)\s+(.+?)\s+que\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\bcu[aá]nto\s+m[aá]s\s+(?:sac[oó]|tuvo|obtuvo|lleva|tiene)\s+(.+?)\s+que\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\bcompar[ae]\s+(.+?)\s+con\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
-    r"|\b(.+?)\s+m[aá]s\s+que\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$",
+    r"|\b(.+?)\s+m[aá]s\s+que\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
+    r"|\b(.+?)\s+y\s+(.+?)\s+(?:quien(?:es)?|cu[aá]l(?:es)?)\s+(?:van|gano|tiene|saco|obtuvo|est[aá]n?|lider[oó]|qued[oó])\b",
     re.IGNORECASE,
 )
 
@@ -866,6 +867,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "trafico", "congestion", "accidente", "noticias", "noticia",
             "moneda", "cambio de moneda", "tipo de cambio",
             "mide", "pesa", "altura", "distancia", "longitud", "peso", "talla",
+            "hotel", "hoteles", "restaurante", "turismo", "vuelos", "hospedaje",
         })
         # "tiempo" alone is ambiguous; only block if paired with weather words
         # "cuanto vale" = pricing query → non-electoral
@@ -1004,7 +1006,8 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         q = re.sub(r"\bbotos?\b", "votos", q, flags=re.IGNORECASE)  # "botos" → "votos"
         q = re.sub(r"\belecsion\b", "eleccion", q, flags=re.IGNORECASE)  # "elecsion" → "eleccion"
         q = re.sub(r"\bme+s+a\b", "mesa", q, flags=re.IGNORECASE)  # "messa/meesa/messaa" → "mesa"
-        q = re.sub(r"\b(?:msa|msa)\b", "mesa", q, flags=re.IGNORECASE)  # "msa" → "mesa"
+        q = re.sub(r"\b(?:msa)\b", "mesa", q, flags=re.IGNORECASE)  # "msa" → "mesa"
+        q = re.sub(r"\bsak[oó]\b", "saco", q, flags=re.IGNORECASE)  # "sako/sakó" → "saco"
         q = re.sub(r"%", " porcentaje ", q)  # "%" → "porcentaje"
         q = re.sub(r"\s{2,}", " ", q).strip()
         # Eliminar muletillas verbales del inicio/fin (normalización lenguaje natural)
@@ -1398,7 +1401,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         _has_mesa = "mesa" in q_norm
         # También detectar rango numérico explícito "X a Y" (ej: "900100 a 900200") o "entre X y Y" o "del X al Y"
         _numeric_range_m = (
-            re.search(r"\b(\d{4,6})\s+a\s+\d{4,6}\b", q_norm)
+            re.search(r"\b(\d{4,6})\s+a\s+(?:la\s+|el\s+)?\d{4,6}\b", q_norm)
             or re.search(r"\bentre\s+(\d{4,6})\s+y\s+\d{4,6}\b", q_norm)
             or re.search(r"\bdel?\s+(\d{4,6})\s+al?\s+\d{4,6}\b", q_norm)
             or re.search(r"\bdesde\s+(?:la\s+)?mesa\s+(\d{4,6})\s+hasta\s+\d{4,6}\b", q_norm)
@@ -1941,6 +1944,9 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "cuando fueron las elecciones", "cuando se realizaron", "fecha de las elecciones",
             # escrutinio
             "escrutinios", "escrutinio", "conteo final", "resultado del escrutinio",
+            # margen y liderazgo
+            "margen de victoria", "margen de diferencia", "distancia entre candidatos",
+            "cuantos peruanos votaron", "peruanos que votaron", "peruanos votaron",
         }
         _is_national = any(p in q_norm for p in _NATIONAL_PHRASES)
         # Departamentos peruanos conocidos — para detectar geo sin preposición ("elecciones 2026 Arequipa")
