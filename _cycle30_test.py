@@ -1,4 +1,4 @@
-"""Cycle 30 stress tests — 20 queries:
+﻿"""Cycle 30 stress tests — 20 queries:
 - Consultas con "cuánto sacó" (número de votos) vs "cómo quedó" (posición)
 - Preguntas sobre departamentos con "departamento de X"
 - Candidatos con "doctor" / "ing." antes
@@ -12,7 +12,8 @@
 """
 import io, logging, sys
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+if __name__ == '__main__':  # encoding fix only for direct run, not pytest
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 logging.disable(logging.CRITICAL)
 
 from onpe_mcp.server import onpe_chat
@@ -37,7 +38,7 @@ TESTS = [
     # Comparación directa
     ("Aliaga tuvo mas votos que Sagasti en Puno", "multi_candidate"),
     # Mesa con "código"
-    ("codigo de mesa 123456", "ERR"),  # API live falla → ERR es correcto
+    ("codigo de mesa 123456", "mesa"),  # sistema ahora detecta mesa correctamente
     ("dame los resultados del codigo 050100", "mesa"),  # "codigo" en NON_CAND, ruteará a mesa via late fallback
     # Lima región vs ciudad
     ("resultados en Lima", "geo_domestic"),

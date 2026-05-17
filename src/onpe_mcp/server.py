@@ -1868,6 +1868,9 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                         and not _cfe_n.startswith("a nivel")
                         and not re.match(r"(?:hacia|desde)\s", _cfe_n)
                         and not re.fullmatch(r"\d+", _cfe_n.strip())  # no son candidatos números puros
+                        and not re.fullmatch(r"peru", _cfe_n.strip())  # "Peru" no es candidato
+                        and not re.match(r"^peru\b", _cfe_n.strip())    # "Peru en X" tampoco
+                        and not re.search(r"\bperu\b", _cfe_n.strip())  # "de Peru en X" tampoco
                         and len(_cfe_n.strip()) >= 3
                         and not (_cfe_w & _NON_CANDIDATE_EXPRESSIONS)
                     ):
@@ -1925,6 +1928,11 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
 
         # Guard: si algún candidato capturado es una expresión no-candidato → no es multi_candidate
         if _multi_candidates and any(_norm(c) in _NON_CANDIDATE_EXPRESSIONS for c in _multi_candidates):
+            _multi_candidates = []
+
+        # Guard: si ambos "candidatos" son principalmente numéricos → es rango de votos, no multi_candidate
+        # e.g. "candidatos entre 10000 y 50000 votos" → nacional
+        if _multi_candidates and all(re.match(r"^\d", c.strip()) for c in _multi_candidates):
             _multi_candidates = []
 
         # Guard: si ambos candidatos capturados son departamentos/lugares geográficos conocidos
@@ -2213,14 +2221,12 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             # territorio nacional
             "todo el territorio peruano", "el territorio peruano", "territorio nacional",
             "territorio del peru", "en todo el territorio",
-            # extranjero / diaspora
-            "en el exterior", "del exterior", "en el extranjero", "del extranjero",
-            "residentes en el extranjero", "residentes en el exterior",
-            "peruanos en el exterior", "peruanos en el extranjero",
-            "comunidad peruana en el exterior",
-            # resumen/informe detallado
+            # extranjero / diaspora — quitados: geo_foreign_summary los maneja
+            # (no agregar aquí: "en el exterior", "del exterior", "en el extranjero", "del extranjero", etc.)
+            # resumen/informe detallado — cuidado con "resultados electorales Bolivia" etc.
             "resumen de los resultados", "resumen de resultados electorales",
-            "resultados electorales", "resultados del proceso electoral",
+            "resultados del proceso electoral",
+            # "resultados electorales" es demasiado greedy; se maneja via condicional
             # disponibilidad de resultados
             "hay resultados", "resultados disponibles", "hay datos disponibles",
             "estan disponibles los resultados", "ya hay resultados",
@@ -2234,8 +2240,16 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "acudieron a votar", "fueron a votar", "participaron en la votacion",
             "quien encabeza", "quien va arriba", "quien lidera el conteo",
             "quien esta arriba", "quien salio primero", "quien quedo primero",
+            "va ganando", "lidera", "va arriba",
+            "hay resultados", "ya hay resultados", "resultados disponibles",
         }
-        if _is_national and re.search(r"\b(?:en|de)\s+\w{3,}", q_norm):
+        if _is_national and re.search(
+            r"\b(?:en|de|para)\s+(?:(?:el|la|los|las)\s+)?(?!(?:el|la|los|las|un|una"
+            r"|eleccion|elecciones|electoral|candidato|candidatos|voto|votos|resultado|resultados"
+            r"|total|totales|general|generales|primera|segunda|vuelta)\b)"
+            r"[A-Za-záéíóúñÁÉÍÓÚÑ]{4,}",
+            q_norm,
+        ):
             # Si la única frase nacional activa es una de tipo genérico/ranking → ceder a geo
             _active_phrases = [p for p in _NATIONAL_PHRASES if p in q_norm]
             if all(p in _NATIONAL_GEO_OVERRIDE_PHRASES for p in _active_phrases):
@@ -2323,6 +2337,23 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         if not _is_national and re.search(r"\bquienes?\s+(?:son\s+(?:los\s+)?)?(?:gan[ao]ron?|lider(?:es)?|superaron|consiguieron|obtuvieron|tuvieron)\b", q_norm):
             if not _GEO_IN_Q:
                 _is_national = True
+        # "resultados electorales" sin geo específico → nacional
+        if not _is_national and re.search(r"\bresultados?\s+electorales?\b", q_norm) and not _GEO_IN_Q:
+            _is_national = True
+        # "top N en Peru" / "resultados en Peru" (país entero sin dept específico) → nacional
+        if not _is_national and re.search(r"\b(?:en|del?)\s+peru\b", q_norm) and not any(re.search(r"\b" + re.escape(d) + r"\b", q_norm) for d in _PERU_DEPTS):
+            _is_national = True
+        # Override: si hay un país extranjero conocido en la consulta (sin preposición) → no es nacional
+        _FOREIGN_COUNTRY_NAMES = frozenset({
+            "bolivia", "argentina", "chile", "colombia", "ecuador", "brasil", "mexico",
+            "eeuu", "usa", "canada", "espana", "italia", "alemania", "francia", "japon",
+            "china", "reino unido", "australia", "nueva zelanda", "venezuela", "paraguay",
+            "uruguay", "panama", "costa rica", "cuba", "haiti", "suiza", "portugal",
+            "belgica", "holanda", "suecia", "noruega", "finlandia", "dinamarca", "rusia",
+            "ucrania", "india", "corea", "tailandia", "vietnam", "indonesia", "singapur",
+        })
+        if _is_national and any(re.search(r"\b" + c + r"\b", q_norm) for c in _FOREIGN_COUNTRY_NAMES):
+            _is_national = False
 
         if _is_national:
             _nat_aggs = store.aggregate_votes_by_party()

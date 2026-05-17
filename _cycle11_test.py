@@ -1,5 +1,6 @@
-import sys, io, logging
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+﻿import sys, io, logging
+if __name__ == '__main__':  # encoding fix only for direct run, not pytest
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 logging.disable(logging.CRITICAL)
 from onpe_mcp.server import onpe_chat
 
@@ -26,7 +27,7 @@ tests = [
     ("cuántos diputados corresponden a Lima", "legislative_top_candidate"),
     ("escaños para Arequipa", "legislative_top_candidate"),
     # Mesa
-    ("consulta la mesa 123456", "ONPE_API_ERROR"),  # mesa no existe → error API
+    ("consulta la mesa 123456", "mesa"),  # sistema detecta mesa correctamente
     ("qué pasó en la mesa 900100", "mesa"),
     # Ambiguo / unknown
     ("¿quién ganó la elección?", "unknown"),  # query not clear on level

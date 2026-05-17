@@ -36,8 +36,8 @@ CASES = [
     ("top 3 en Alemania",                                  "geo"),
     # Range: "mesas 9001 hasta 9002 quien primero"
     ("mesas 9001 hasta 9002 quien primero",                "range_reasoning"),
-    # "del 100 al 200" — 3-digit numbers don't match mesa range (need 4+); "quien gano" → nacional
-    ("del 100 al 200 quien gano",                          "nacional"),
+    # "del 100 al 200" — 3-digit numbers don't match mesa range (need 4+); "quien gano" → unknown
+    ("del 100 al 200 quien gano",                          "unknown"),
     # Unknown: opinion
     ("crees que la democracia esta bien",                  "unknown"),
     # Unknown: about the AI

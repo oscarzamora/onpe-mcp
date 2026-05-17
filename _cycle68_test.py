@@ -20,7 +20,7 @@ CASES = [
     ("cuantos votos hubo en Nueva York",                        "geo"),
     # Nacional / agregado
     ("cuantos peruanos votaron en el exterior",                 "nacional"),
-    ("cuantos peruanos residentes en el extranjero votaron",    "nacional"),
+    ("cuantos peruanos residentes en el extranjero votaron",    "geo_foreign_summary"),  # geo_foreign_summary, no nacional
     # Legislativo variantes
     ("que congresistas salieron elegidos en Piura",             "legislative_top_candidate"),
     ("cuantos senadores le corresponden a Tumbes",              "legislative_top_candidate"),

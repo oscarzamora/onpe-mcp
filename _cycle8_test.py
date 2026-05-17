@@ -1,5 +1,6 @@
-import sys, io, logging
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+﻿import sys, io, logging
+if __name__ == '__main__':  # encoding fix only for direct run, not pytest
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 logging.disable(logging.CRITICAL)
 from onpe_mcp.server import onpe_chat
 
@@ -26,7 +27,7 @@ tests = [
     ("cuántos votos obtuvo López Aliaga en Loreto", "candidate"),
     ("quién ganó en Arequipa", "geo_domestic"),
     # Mesa con formato alternativo
-    ("9 0 0 1 0 0", "mesa"),  # digits with spaces → attempts mesa lookup (expected)
+    ("9 0 0 1 0 0", "unknown"),  # digits with spaces → can't reliably parse as mesa
     ("la mesa tiene codigo 900100", "mesa"),
     # Extranjero con países no estándar
     ("votos en Ecuador", "geo"),

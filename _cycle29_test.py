@@ -1,4 +1,4 @@
-"""Cycle 29 stress tests — 20 queries:
+﻿"""Cycle 29 stress tests — 20 queries:
 - Candidatos con variantes de nombre (abreviaciones, alias)
 - Preguntas con "cuánto porcentaje"
 - Preguntas sobre "segunda vuelta" en distintas formas
@@ -12,7 +12,8 @@
 """
 import io, logging, sys
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+if __name__ == '__main__':  # encoding fix only for direct run, not pytest
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 logging.disable(logging.CRITICAL)
 
 from onpe_mcp.server import onpe_chat

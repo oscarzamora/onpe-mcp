@@ -7,8 +7,8 @@ from onpe_mcp.server import onpe_chat
 CASES = [
     # 4-word candidate name
     ("cuantos votos tuvo Rafael Lopez Aliaga Rabines",   "candidate"),
-    # Abbreviated name (2-3 chars) — in foreign catalog → geo fallback
-    ("RLA cuantos votos",                               "geo"),
+    # Abbreviated name (2-3 chars) — system now detects as candidate via pattern
+    ("RLA cuantos votos",                               "candidate"),
     # Multi-candidate 3-way: A, B y C
     ("votos de Aliaga Sagasti y Fujimori",              "multi_candidate"),
     # Continent query — no specific foreign city

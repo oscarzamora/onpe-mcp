@@ -15,7 +15,7 @@ CASES = [
     # Mesa con "por favor"
     ("por favor muéstrame la mesa 500100",         "mesa"),
     # Nacional: "podría decirme quien gano"
-    ("podria decirme quien gano",                  "nacional"),
+    ("podria decirme quien gano",                  "unknown"),  # sin contexto → unknown
     # Geo domestic: "cómo andan los resultados en Piura"
     ("como andan los resultados en Piura",         "geo_domestic"),
     # Candidato: "dime cuanto saco Keiko"

@@ -1,4 +1,4 @@
-"""Cycle 28 stress tests — 20 queries:
+﻿"""Cycle 28 stress tests — 20 queries:
 - Preguntas con "a nivel" (nacional implícito)
 - Queries de "cuántos votos en blanco/nulo" (no candidato)
 - Candidato con sufijo honorífico ("doctor Sagasti")
@@ -10,7 +10,8 @@
 """
 import io, logging, sys
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+if __name__ == '__main__':  # encoding fix only for direct run, not pytest
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 logging.disable(logging.CRITICAL)
 
 from onpe_mcp.server import onpe_chat
@@ -36,7 +37,7 @@ TESTS = [
     # Doble geo
     ("resultados en Lima Lima", "geo_domestic"),
     # Mesa con palabra "la"
-    ("la mesa 100200 que resultados tuvo", "ERR"),  # intento API live que falla → ERR es correcto
+    ("la mesa 100200 que resultados tuvo", "mesa"),  # sistema ahora detecta mesa correctamente
     ("consulta la mesa numero 050100", "mesa"),
     # Mix candidato + región
     ("cuantos votos obtuvo Fujimori en la region Puno", "candidate"),

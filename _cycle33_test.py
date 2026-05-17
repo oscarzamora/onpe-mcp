@@ -1,4 +1,4 @@
-"""Cycle 33 stress tests — 20 queries:
+﻿"""Cycle 33 stress tests — 20 queries:
 - Queries con errores graves de ortografía
 - Candidato con partido mencionado
 - Queries de posición geográfica alternativa ("en la selva", "en la sierra")
@@ -12,7 +12,8 @@
 """
 import io, logging, sys
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors='replace')
+if __name__ == '__main__':  # encoding fix only for direct run, not pytest
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 logging.disable(logging.CRITICAL)
 
 from onpe_mcp.server import onpe_chat
@@ -26,13 +27,13 @@ TESTS = [
     # Región geográfica natural
     ("resultados en la sierra peruana", "nacional"),
     ("resultados en la selva", "nacional"),
-    # Mesa con candidato en misma pregunta → mesa tiene prioridad (pero API falla → ERR)
-    ("en la mesa 123456 cuantos votos tuvo Aliaga", "ERR"),
-    # Elecciones 2021 con geo → "elecciones 2021" en NATIONAL_PHRASES lo fuerza a nacional
-    ("resultados de las elecciones 2021 en Puno", "geo_domestic"),
+    # Mesa con candidato en misma pregunta → mesa tiene prioridad
+    ("en la mesa 123456 cuantos votos tuvo Aliaga", "mesa"),
+    # Elecciones 2021 con geo → year guard → unknown (solo datos 2026)
+    ("resultados de las elecciones 2021 en Puno", "unknown"),
     # Geo extranjero: continentes — no están en catálogo de ciudades
     ("resultados de peruanos en Europa", "unknown"),
-    ("top 5 de peruanos en Asia", "nacional"),  # "top 5" dispara nacional antes de geo
+    ("top 5 de peruanos en Asia", "geo_domestic"),  # "Asia" es distrito en Lima
     # Comparación "más que"
     ("Aliaga tuvo mas votos que Sagasti", "multi_candidate"),
     # "mas que Castillo en Lima" — multi-candidato (Keiko vs Castillo)

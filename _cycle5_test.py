@@ -1,5 +1,6 @@
-import sys, io, logging
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+﻿import sys, io, logging
+if __name__ == '__main__':  # encoding fix only for direct run, not pytest
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 logging.disable(logging.CRITICAL)
 from onpe_mcp.server import onpe_chat
 
@@ -8,7 +9,7 @@ tests = [
     ("keiko cuantos votos tiene","candidate"),
     ("vizcarrra en arequipa","candidate"),
     ("acuna piura votos","candidate"),
-    ("de las mesas que arrancan en 900000 quien tuvo mas votos","ERR"),
+    ("de las mesas que arrancan en 900000 quien tuvo mas votos","range_reasoning"),
     ("votos","unknown"),
     ("en Lima","geo_domestic"),
     ("top","unknown"),
