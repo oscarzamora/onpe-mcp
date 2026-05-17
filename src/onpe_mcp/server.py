@@ -68,13 +68,13 @@ _CANDIDATE_VOTE_PATTERNS = [
     # acepta "en total", "fue que" intercalados: "cuántos votos fue que obtuvo X"
     # acepta typos b/v frecuentes en español peruano: tubo/obtubo/obtubieron
     re.compile(
-        r"\bcu[aá]ntos?\s+votos?\s+(?:en\s+total\s+|fue\s+que\s+|se\s+)?(?:tuvo|tuvieron|tubo|tubieron|sac[oó]|sacaron|tiene|tienen|obtuvo|obtuvieron|obtubo|obtubieron|gan[oó]|ganaron|logr[oó]|lograron|consigui[oó]|consiguieron|recibi[oó]|recibieron|junt[oó]|juntaron|lleva|llevan|lleba|lleban|llev[oó]|llevaron|acumula|acumulan|sum[oó]|sumaron)\s+(.+?)(?:\s+(?:en|a\s+nivel|para)\b.*)?$",
+        r"\bcu[aá]ntos?\s+votos?\s+(?:en\s+total\s+|fue\s+que\s+|se\s+)?(?:tuvo|tuvieron|tubo|tubieron|sac[oó]|sacaron|tiene|tienen|obtuvo|obtuvieron|obtubo|obtubieron|gan[oó]|ganaron|logr[oó]|lograron|consigui[oó]|consiguieron|recibi[oó]|recibieron|junt[oó]|juntaron|lleva|llevan|lleba|lleban|llev[oó]|llevaron|acumula|acumulan|sum[oó]|sumaron|lleg[oó]|llegaron)\s+(.+?)(?:\s+(?:en|a\s+nivel|para)\b.*)?$",
         re.IGNORECASE,
     ),
     # "cuánto sacó/obtuvo X" / "que porcentaje obtuvo X" — también plural "cuántos"
     # acepta palabras intermedias: "cuanto porcentaje saco X", "cuantos puntos tuvo X"
     re.compile(
-        r"\b(?:cu[aá]ntos?\s+(?:\w+\s+)?|qu[eé]\s+(?:porcentaje|puntaje|puntos?|lugar|posici[oó]n)\s+)(?:sac[oó]|obtuvo|logr[oó]|llev[oó]|anot[oó]|junt[oó]|consigui[oó]|recibi[oó]|tiene|tuvo)\s+(.+?)(?:\s+(?:en|a\s+nivel|total|en\s+total)\b.*)?$",
+        r"\b(?:cu[aá]ntos?\s+(?:\w+\s+)?|qu[eé]\s+(?:porcentaje|puntaje|puntos?|lugar|posici[oó]n)\s+)(?:sac[oó]|obtuvo|logr[oó]|llev[oó]|anot[oó]|junt[oó]|consigui[oó]|recibi[oó]|tiene|tuvo|lleg[oó])\s+(.+?)(?:\s+(?:en|a\s+nivel|total|en\s+total)\b.*)?$",
         re.IGNORECASE,
     ),
     # "votos de X" / "votos totales de X" / "número de votos de X"
@@ -114,6 +114,11 @@ _CANDIDATE_VOTE_PATTERNS = [
     # "qué lugar sacó X" / "cuál fue el lugar de X" / "en qué posición quedó X"
     re.compile(
         r"\b(?:qu[eé]\s+(?:lugar|posici[oó]n|puesto)\s+(?:sac[oó]|tiene|obtuvo|qued[oó])|cu[aá]l\s+(?:fue|es)\s+(?:el|la)\s+(?:lugar|posici[oó]n|puesto)\s+de)\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$",
+        re.IGNORECASE,
+    ),
+    # "a cuanto llegó/llego X" / "hasta cuanto llego X en el conteo"
+    re.compile(
+        r"\ba\s+cu[aá]nto(?:s|\s+votos?)?\s+lleg[oó]\s+(.+?)(?:\s+(?:en|a\s+nivel|total|en\s+el)\b.*)?$",
         re.IGNORECASE,
     ),
     # "X cuántos votos" (order reversed) — also "X cuántos lleva/tiene/acumula"
@@ -259,6 +264,7 @@ _MULTI_CANDIDATE_PATTERN = re.compile(
     r"|\b(?:si\s+)?(.+?)\s+(?:le\s+)?gan[oó]\s+(?:a|contra)\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\btanto\s+(.+?)\s+como\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\b(.+?)\s+(?:tuvo|sac[oó]|obtuvo)\s+m[aá]s\s+votos?\s+que\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
+    r"|\bcu[aá]ntos?\s+m[aá]s\s+votos?\s+(?:tuvo|sac[oó]|obtuvo|tiene|lleva)\s+(.+?)\s+que\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\bcu[aá]nto\s+m[aá]s\s+(?:sac[oó]|tuvo|obtuvo|lleva|tiene)\s+(.+?)\s+que\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\b(.+?)\s+m[aá]s\s+que\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$",
     re.IGNORECASE,
@@ -882,6 +888,23 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                 started_ms=started_ms,
             )
 
+        # Historical/biographical queries → unknown
+        _has_historical = bool(
+            re.search(r"\b(?:antes\s+de\s+ser|antes\s+de\s+convertirse|biografia|historia\s+de|quién\s+fue\s+.+\s+antes|nació|murió|estudió)\b", _q_norm_guard)
+            and not any(kw in _q_norm_guard for kw in ("voto", "votos", "eleccion", "resultado", "candidato", "mesa"))
+        )
+        if _has_historical:
+            return ok_response(
+                {
+                    "intent": "unknown",
+                    "answer": (
+                        "Esa pregunta parece ser biográfica o histórica, fuera del alcance electoral. "
+                        "Puedo responder sobre votos, resultados o candidatos en las elecciones peruanas 2026."
+                    ),
+                },
+                started_ms=started_ms,
+            )
+
         # Detectar preguntas matemáticas / aritméticas → unknown
         if re.search(r"\bcu[aá]nto\s+es\b|\bcuanto\s+vale\b|\bcuantos\s+son\b", _q_norm_guard) and re.search(r"\d", _q_norm_guard) and not any(
             kw in _q_norm_guard for kw in ("voto", "votos", "eleccion", "candidato", "mesa")
@@ -972,7 +995,9 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         top_n = extract_top_n(q, default=5, minimum=1, maximum=20)
 
         # Intención 0: legislativo (diputados/senadores/escaños/congresistas) más votado por distrito
-        if "diputad" in q_norm or "senador" in q_norm or re.search(r"\besca[nñ]os?\b", q_norm) or "congresista" in q_norm:
+        if ("diputad" in q_norm or "senador" in q_norm or "congresista" in q_norm
+                or re.search(r"\besca[nñ]os?\b", q_norm)
+                or re.search(r"\brepresentantes?\b", q_norm)):
             cargo = "senadores" if ("senador" in q_norm or ("esca" in q_norm and "senador" in q_norm)) else "diputados"
             if "senador" in q_norm:
                 cargo = "senadores"
