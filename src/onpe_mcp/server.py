@@ -1138,7 +1138,18 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                 started_ms=started_ms,
             )
 
-        # Detectar preguntas de hora / tiempo de reloj → unknown
+        # Personal/biographical query about candidates → non-electoral
+        if re.search(r"\bcu[aá]ntos?\s+(?:hijos?|hermanos?|esposos?|esposas?|marido|mujer|carros?|casas?|dinero|sueldo|deudas?|bienes?|a[ñn]os?\s+(?:tiene|tuvo|cumple)|novio|novia|cuentas?|patrimonio|seguros?|propiedades?)\b", _q_norm_guard):
+            return ok_response(
+                {
+                    "intent": "unknown",
+                    "answer": (
+                        "Esa pregunta es sobre datos personales o biográficos, no sobre resultados electorales. "
+                        "Puedo responder sobre votos, candidatos y resultados de las elecciones peruanas 2026."
+                    ),
+                },
+                started_ms=started_ms,
+            )
         if re.search(
             r"\bqu[eé]\s+hora\b|\bdime\s+la\s+hora\b|\bcu[aá]l\s+es\s+la\s+hora\b"
             r"|\bqu[eé]\s+hora\s+es\b|\ba\s+qu[eé]\s+hora\b",
@@ -2441,7 +2452,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         if not _is_national and re.search(r"\b(?:elecciones?|electoral(?:es)?)\b", q_norm) and not _GEO_IN_Q and not _dept_name_in_q and not re.search(r"\b20(?:21|22|23|24|25)\b", q_norm):
             _is_national = True
         # bare standalone electoral keywords → nacional
-        if not _is_national and q_norm.strip() in {"resultados", "resultado", "quien gano", "quien gan"}:
+        if not _is_national and q_norm.strip() in {"resultados", "resultado", "quien gano", "quien gan", "votos", "voto", "candidatos", "ganador", "ganadora", "ganadores", "eleccion", "primera vuelta", "segunda vuelta", "2026"}:
             _is_national = True
         # "quienes participaron" / "quien quedo N" / "cual fue el resultado" → nacional
         if not _is_national and not _GEO_IN_Q and not _dept_name_in_q:
