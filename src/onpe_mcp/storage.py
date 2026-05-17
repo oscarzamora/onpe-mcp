@@ -55,8 +55,6 @@ _CITY_ALIASES: dict[str, str] = {
     "nazca": "nazca",
     # Arequipa
     "arequipa": "arequipa",
-    # Moquegua
-    "moquegua": "mariscal nieto",
     # Tacna
     "tacna": "tacna",
     # Puno
@@ -68,8 +66,8 @@ _CITY_ALIASES: dict[str, str] = {
     # Apurimac
     "abancay": "abancay",
     "andahuaylalas": "andahuaylas",
-    # Ayacucho
-    "ayacucho": "huamanga",
+    # Ayacucho — «ayacucho» es nombre de departamento; se resuelve por lookup RENIEC departamental.
+    # No se alias: «ayacucho» → «huamanga» porque perdería el resto de provincias del dept.
     "huamanga": "huamanga",
     # Huancavelica
     "huancavelica": "huancavelica",
