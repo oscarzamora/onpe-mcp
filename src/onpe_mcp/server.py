@@ -86,6 +86,11 @@ _CANDIDATE_VOTE_PATTERNS = [
         r"\bn[uú]mero\s+de\s+votos?\s+de\s+(.+?)(?:\s+(?:en|a\s+nivel|total|nacional)\b.*)?$",
         re.IGNORECASE,
     ),
+    # "votos en la elección de X" → candidato X
+    re.compile(
+        r"\bvotos?\s+en\s+(?:la\s+)?elecci[oó]n\s+de\s+(.+?)(?:\s+(?:en|a\s+nivel|total|nacional)\b.*)?$",
+        re.IGNORECASE,
+    ),
     # "qué resultados/votos/porcentaje tuvo/obtuvo/sacó X"
     re.compile(
         r"\bqu[eé]\s+(?:result(?:ados?|[oó])|votos?|porcentaje|puntuaci[oó]n|puntaje|lugar|posici[oó]n)\s+(?:tuvo|obtuvo|sac[oó]|logr[oó]|consigui[oó]|recibi[oó])\s+(.+?)$",
@@ -112,8 +117,9 @@ _CANDIDATE_VOTE_PATTERNS = [
         re.IGNORECASE,
     ),
     # "X cuántos votos" (order reversed) — also "X cuántos lleva/tiene/acumula"
+    # The (?:\s+...)? at the end is optional to also match bare "X cuántos" (no verb/votos)
     re.compile(
-        r"^(.+?)\s+cu[aá]ntos?\s+(?:votos?\s+)?(?:sac[oó]|tuvo|tiene|obtuvo|lleva|acumula|sum[oó]|consigui[oó])?",
+        r"^(.+?)\s+cu[aá]ntos?(?:\s+(?:votos?\s+)?(?:sac[oó]|tuvo|tiene|obtuvo|lleva|acumula|sum[oó]|consigui[oó])?)?$",
         re.IGNORECASE,
     ),
     # Bare "NAME en GEO" / "NAME en GEO?" — fallback for queries sin verbo
@@ -816,6 +822,31 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                 started_ms=started_ms,
             )
 
+        # ── Guard: dominios claramente no electorales ──────────────────────
+        _q_norm_guard = _norm(q)
+        _NON_ELECTORAL_TOKENS = frozenset({
+            "dolar", "euro", "libra", "yen", "precio", "costo", "coste",
+            "gasolina", "petroleo", "gas", "temperatura", "clima", "tiempo",
+            "tipo de cambio", "cotizacion", "bitcoin", "criptomoneda",
+        })
+        if _NON_ELECTORAL_TOKENS & set(_q_norm_guard.split()) and not any(
+            kw in _q_norm_guard for kw in (
+                "voto", "votos", "eleccion", "resultado", "candidato", "mesa",
+                "senador", "diputado", "congresista", "partido"
+            )
+        ):
+            return ok_response(
+                {
+                    "intent": "unknown",
+                    "answer": (
+                        "Esa consulta no parece estar relacionada con resultados electorales. "
+                        "Puedo responder preguntas como: *'¿cuántos votos obtuvo López Aliaga?'* "
+                        "o *'top 5 en Arequipa'* o *'senadores para Puno'*."
+                    ),
+                },
+                started_ms=started_ms,
+            )
+
         # ── Guard: DB no hidratada ──────────────────────────────────────────
         try:
             _total_mesas = store.total_mesas_local()
@@ -1462,19 +1493,31 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                 }
                 return ok_response(data, started_ms=started_ms)
 
-            # Tier 2: Live API
-            mesa = onpe_api.get_mesa(code, id_eleccion=max(1, int(id_eleccion)), timeout=max(1, int(timeout)))
-            store.upsert_mesa_bundle(code, mesa, source="onpe_live", id_eleccion=max(1, int(id_eleccion)))
-            store.append_raw_event("onpe_chat_mesa", {"query": q, "codigo_mesa": code, "found": bool(mesa.get("found"))})
-            estado = (mesa.get("mesa_data") or {}).get("estado_acta", "No disponible")
-            data = {
-                "intent": "mesa",
-                "answer": f"Mesa {code}: estado {estado}.",
-                "result": mesa,
-                "source": "onpe_live",
-                "data_tier": "tier_2_onpe_api",
-            }
-            return ok_response(data, started_ms=started_ms)
+            # Tier 2: Live API — wrapped para siempre devolver intent="mesa"
+            try:
+                mesa = onpe_api.get_mesa(code, id_eleccion=max(1, int(id_eleccion)), timeout=max(1, int(timeout)))
+                store.upsert_mesa_bundle(code, mesa, source="onpe_live", id_eleccion=max(1, int(id_eleccion)))
+                store.append_raw_event("onpe_chat_mesa", {"query": q, "codigo_mesa": code, "found": bool(mesa.get("found"))})
+                estado = (mesa.get("mesa_data") or {}).get("estado_acta", "No disponible")
+                data = {
+                    "intent": "mesa",
+                    "answer": f"Mesa {code}: estado {estado}.",
+                    "result": mesa,
+                    "source": "onpe_live",
+                    "data_tier": "tier_2_onpe_api",
+                }
+                return ok_response(data, started_ms=started_ms)
+            except Exception as _mesa_err:
+                return ok_response(
+                    {
+                        "intent": "mesa",
+                        "answer": f"Detecté la mesa **{code}** pero no pude consultar la API en este momento ({type(_mesa_err).__name__}). Intenta de nuevo o usa `onpe_get_mesa('{code}')` directamente.",
+                        "result": None,
+                        "source": "api_error",
+                        "data_tier": "tier_2_onpe_api",
+                    },
+                    started_ms=started_ms,
+                )
 
         # ── Candidato ANTES de geo Y nacional ───────────────────────────────
         # ORDEN CRÍTICO: candidato primero para que apellidos como Castillo,
@@ -1789,10 +1832,14 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         # Se excluyen palabras del dominio electoral que nunca son lugares.
         _GEO_IN_Q = re.search(
             r"\b(?:en|de)\s+(?:(?:el|la|los|las)\s+)?(?!\d)"
-            r"(?!(?:todos?|todas?|cada|alguno?|ninguno?|cualquier|la\s+eleccion|candidatos?"
+            r"(?!(?:el|la|los|las|un|una|unos|unas"
+            r"|todos?|todas?|cada|alguno?|ninguno?|cualquier|la\s+eleccion|candidatos?"
             r"|votos?|voto|porcentaje|datos?|resultado|resultados|informacion|info"
             r"|blanco|nulos?|viciados?|blancos|invalidos?|total|totales|general|generales"
-            r"|primera|segunda|tercera|vuelta|turno|ronda|siguiente|anterior)\b)\w{3,}",
+            r"|primera|segunda|tercera|primera|primer|segundo|tercer|tercero|cuarta|quinto"
+            r"|vuelta|turno|ronda|siguiente|anterior"
+            r"|eleccion|elecciones|elecci[oó]n|electoral|electorales"
+            r"|dolar|euro|sol|libra|precio|costo|cambio|tipo)\b)\w{3,}",
             q_norm
         ) or _bare_dept_in_q
         if not _is_national and re.search(r"\b(top\s*\d*|\d+\s+primeros?|primeros?\s+\d+)\b", q_norm) and (
@@ -1812,8 +1859,8 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         # "candidatos/candidato" sin geo → nacional (ej: "cuántos candidatos se presentaron")
         if not _is_national and re.search(r"\bcandidatos?\b", q_norm) and not _GEO_IN_Q:
             _is_national = True
-        # "resultados de la eleccion" sin geo específico → nacional
-        if not _is_national and re.search(r"\bresultados?\s+de\s+(?:la\s+)?elecci[oó]n\b", q_norm) and not _GEO_IN_Q:
+        # "resultados de la eleccion/elecciones" sin geo específico → nacional
+        if not _is_national and re.search(r"\bresultados?\s+de\s+(?:la[s]?\s+)?elecci[oó]nes?\b", q_norm) and not _GEO_IN_Q:
             _is_national = True
         # "primera vuelta" / "segunda vuelta" sin geo explícita → nacional
         if not _is_national and re.search(r"\b(?:primera|segunda)\s+vuelta\b", q_norm) and not _GEO_IN_Q:
@@ -1835,6 +1882,9 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             _is_national = True
         # "distribución de votos" → nacional
         if not _is_national and re.search(r"\bdistribuci[oó]n\s+de\s+votos?\b", q_norm) and not _GEO_IN_Q:
+            _is_national = True
+        # "quien salió en primer/segundo lugar" → ranking nacional sin geo
+        if not _is_national and re.search(r"\b(?:quien|quienes?)\s+(?:sali[oó]|qued[oó]|result[oó])\s+en\s+(?:primer|segundo|tercer|cuarto|quinto)\b", q_norm) and not _GEO_IN_Q:
             _is_national = True
         # "quienes ganaron/superaron/consiguieron" sin geo → nacional; con "en PLACE" → geo_domestic
         if not _is_national and re.search(r"\bquienes?\s+(?:son\s+(?:los\s+)?)?(?:gan[ao]ron?|lider(?:es)?|superaron|consiguieron|obtuvieron|tuvieron)\b", q_norm):
