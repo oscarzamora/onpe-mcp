@@ -1,5 +1,41 @@
 # ONPE MCP
 
+## ¿Qué es esto? (para quienes no son técnicos)
+
+Imagina que puedes **preguntarle a un asistente de IA** cosas como:
+
+> *"¿Cuántos votos sacó Keiko Fujimori en Puno?"*
+> *"¿Quién ganó en las mesas de Loreto?"*
+> *"¿Qué pasó en la mesa 900100?"*
+> *"¿Hubo fraude en las mesas 900K? — es verdad?"*
+
+…y recibir una respuesta inmediata con datos reales de la ONPE, **sin buscar en PDFs, sin abrir el portal web, sin saber de tecnología**.
+
+**ONPE MCP es el puente** entre un asistente de IA (como Claude o cualquier herramienta compatible con MCP) y los datos oficiales de las elecciones presidenciales del Perú 2026. Tiene las **92,766 mesas de sufragio** cargadas localmente y responde en menos de un segundo.
+
+### ¿Para qué sirve?
+
+| Quiero saber... | Ejemplo de pregunta |
+|---|---|
+| Resultados de una mesa específica | *"dame los resultados de la mesa 900574"* |
+| Quién ganó en mi región | *"top 5 en Puno — quiénes fueron los más votados"* |
+| Votos de un candidato | *"cuántos votos sacó Rafael López Aliaga a nivel nacional"* |
+| Resultados de peruanos en el exterior | *"quién ganó entre los peruanos en Suecia"* |
+| Legislativo | *"quién fue el diputado más votado en Lima"* |
+| Contexto electoral | *"¿qué es el STAE?, ¿puede manipular votos?"* |
+
+### ¿Cómo funciona por dentro? (sin tecnicismos)
+
+1. **Tú preguntas** en lenguaje natural — no necesitas saber códigos ni formatos especiales.
+2. **El asistente entiende** qué quieres (una mesa, una región, un candidato…).
+3. **Primero busca en la base de datos local** — respuesta en milisegundos, sin internet.
+4. **Si no lo tiene guardado**, consulta directamente la ONPE — un poco más lento pero siempre actualizado.
+5. **Si la pregunta es sobre el proceso electoral** (fraude, STAE, segunda vuelta…), responde con un compendio de 535 hechos verificados.
+
+> La base de datos local se descarga automáticamente la primera vez que arrancas el servidor (~2 minutos). Después de eso, todo es instantáneo.
+
+---
+
 Servidor [MCP](https://modelcontextprotocol.io/) para consultas electorales sobre **Perú 2026 — primera vuelta presidencial**. Expone las 92,766 mesas de sufragio con estrategia **cache-first**: SQLite local → API ONPE live → compendio cualitativo verificable.
 
 > **Velocidad**: todas las consultas sobre datos locales resuelven en **<100 ms**. Las consultas que requieren la API ONPE en vivo dependen de la red (~1-8 s).
