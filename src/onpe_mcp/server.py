@@ -75,8 +75,9 @@ _CANDIDATE_VOTE_PATTERNS = [
     # "cuánto sacó/obtuvo X" / "que porcentaje obtuvo X" — también plural "cuántos"
     # acepta palabras intermedias: "cuanto porcentaje saco X", "cuantos puntos tuvo X"
     # acepta "habia/habria sacado" (pluscuamperfecto / condicional)
+    # Nota: "total" eliminado del trailing para evitar capturar solo "en" en "cuanto saco en total el X"
     re.compile(
-        r"\b(?:cu[aá]ntos?\s+(?:habr?[ií]a\s+|hab[ií]a\s+)?(?:\w+\s+)?|qu[eé]\s+(?:porcentaje|puntaje|puntos?|lugar|posici[oó]n)\s+(?:de\s+votos?\s+)?)(?:sac[oó]|sacado|obtuvo|obtenido|logr[oó]|logrado|llev[oó]|llevado|anot[oó]|junt[oó]|juntado|consigui[oó]|conseguido|recibi[oó]|recibido|tiene|tuvo|lleg[oó]|llegado|alcanz[oó]|alcanzado)\s+(.+?)(?:\s+(?:en|a\s+nivel|total|en\s+total)\b.*)?$",
+        r"\b(?:cu[aá]ntos?\s+(?:habr?[ií]a\s+|hab[ií]a\s+)?(?:\w+\s+)?|qu[eé]\s+(?:porcentaje|puntaje|puntos?|lugar|posici[oó]n)\s+(?:de\s+votos?\s+)?)(?:sac[oó]|sacado|obtuvo|obtenido|logr[oó]|logrado|llev[oó]|llevado|anot[oó]|junt[oó]|juntado|consigui[oó]|conseguido|recibi[oó]|recibido|tiene|tuvo|lleg[oó]|llegado|alcanz[oó]|alcanzado)\s+(.+?)(?:\s+(?:en|a\s+nivel|en\s+total)\b.*)?$",
         re.IGNORECASE,
     ),
     # "votos de X" / "votos totales de X" / "número de votos de X"
@@ -295,7 +296,7 @@ _MULTI_CANDIDATE_PATTERN = re.compile(
     r"|\bentre\s+(.+?)\s+y\s+(.+?)(?:\s+(?:en|a\s+nivel|quien)\b.*)?$"
     r"|\b(.+?)\s+frente\s+a\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\b(.+?)\s+contra\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
-    r"|\b(.+?)\s+o\s+(.+?)\s+(?:quien|cu[aá]l|cu[aá]ntos?)\s+(?:sac[oó]|tuvo|obtuvo|tiene|tiene\s+m[aá]s|gan[oó]|logr[oó])"
+    r"|\b(.+?)\s+o\s+(.+?)\s+(?:quien|cu[aá]l|cu[aá]ntos?)\s+(?:sac[oó]|tuvo|obtuvo|tiene|tiene\s+m[aá]s|gan[oó]|logr[oó]|va|lleva|lidera|est[aá])"
     r"|\bgan[oó]\s+(.+?)\s+o\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\bquien\s+(?:sac[oó]|tuvo|obtuvo|tiene)\s+m[aá]s\s+(.+?)\s+o\s+(.+?)(?:\?|$)"
     r"|\b(.+?)\s+cu[aá]ntos?\s+votos?\s+(?:y|e)\s+(.+?)\s+cu[aá]ntos?\s+votos?"
@@ -432,8 +433,8 @@ _FILLER_START = re.compile(
     r"|(?:quiero|quisiera|necesito|podri[aá]s?\s+decirme|podr[íi]a[s]?\s+decirme)\s+(?:saber\s+|ver\s+)?"
     r"|(?:oye|oiga|escucha)[,\s]+"
     r"|(?:ponme|dame|muestrame|muéstrame|dime)[,\s]+"
+    r"|sabes?\s+"
     r"|(?:por\s+favor[,\s]+)?"
-    r"|(?:sabes?[,\s]+)?"
     r"|(?:dime\s+)?"
     r"|(?:(?:me\s+)?(?:puedes?|podr[íi]as?)\s+(?:decirme\s+|mostrarme?\s+|ver\s+)?)?"
     r")",
@@ -447,9 +448,17 @@ _FILLER_END = re.compile(
 
 
 def _strip_filler(text: str) -> str:
-    """Elimina muletillas verbales de inicio/fin para normalizar lenguaje natural."""
-    t = _FILLER_START.sub("", text.strip())
-    t = _FILLER_END.sub("", t).strip()
+    """Elimina muletillas verbales de inicio/fin para normalizar lenguaje natural.
+    Itera hasta estabilizarse para manejar cadenas de muletillas (ej: 'oye sabes cuanto')."""
+    t = text.strip()
+    for _ in range(5):  # máximo 5 pases
+        t2 = _FILLER_START.sub("", t)
+        t2 = _FILLER_END.sub("", t2).strip()
+        if not t2:
+            break
+        if t2 == t:
+            break
+        t = t2
     return t if t else text.strip()
 
 
@@ -907,6 +916,9 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "mundial", "campeonato", "torneo", "copa", "deporte", "futbol", "olimpiadas",
             "planeta", "planetas", "sistema solar", "estrella", "galaxia", "universo",
             "independencia", "liberacion", "fundacion", "constitucion", "historia",
+            "pelicula", "peliculas", "oscar", "cine", "cinema", "actor", "actriz",
+            "nominacion", "nominaciones", "serie", "television", "musica", "cancion",
+            "album", "artista", "concierto", "espectaculo", "teatro", "obra",
         })
         # "tiempo" alone is ambiguous; only block if paired with weather words
         # "cuanto vale" = pricing query → non-electoral
@@ -1761,6 +1773,10 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                     _cfe_cand = re.sub(r"^(?:el|la|los|las)\s+(?=[a-záéíóúñ])", "", _cfe_cand).strip()
                     # Quitar preposición inicial "a/para" (ej: "a Forsyth", "para Lopez Aliaga")
                     _cfe_cand = re.sub(r"^(?:a|para)\s+(?=[A-Za-záéíóúñÁÉÍÓÚÑ])", "", _cfe_cand).strip()
+                    # Quitar "en total [el/la]" al inicio si el patrón lo capturó como prefijo
+                    _cfe_cand = re.sub(r"^en\s+total\s+(?:el?\s+|la\s+|los\s+|las\s+)?", "", _cfe_cand, flags=re.IGNORECASE).strip()
+                    # Quitar trailing " en total" / " a nivel nacional"
+                    _cfe_cand = re.sub(r"\s+en\s+total\s*$|\s+a\s+nivel\s+nacional\s*$", "", _cfe_cand, flags=re.IGNORECASE).strip()
                     _cfe_n = _norm(_cfe_cand)
                     _cfe_w = set(_cfe_n.split())
                     if (
@@ -2017,10 +2033,10 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "a nivel nacional", "todo el peru", "a nivel del peru",
             "nivel nacional", "todo peru", "en el peru", "resultados nacionales",
             "a nivel de peru", "peru entero", "todo el pais",
-            "quien gano las elecciones", "quien fue el ganador", "quien gano",
+            "quien gano las elecciones", "quien fue el ganador",
             "presidente electo", "quien es el presidente",
             "ganador de las elecciones", "ganador de la eleccion",
-            "top candidatos", "top de candidatos",
+            "top de candidatos",
             "candidatos con mas votos", "candidatos mas votados",
             "mas votados", "los mas votados",
             "podio electoral", "podio", "lideres electorales",
