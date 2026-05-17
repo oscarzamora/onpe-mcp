@@ -1395,17 +1395,21 @@ class DataStore:
         with self._connect() as conn:
             self._ensure_votes_by_ubigeo_partido_backfilled(conn)
 
+            # Excluir siempre blancos (80), nulos (81) y viciados (82):
+            # no son candidatos y distorsionan el ranking de partidos/candidatos.
+            _NON_CANDIDATE_IDS = ("80", "81", "82")
             sql = (
                 "SELECT v.partido_id AS partido_id, "
                 "COALESCE(a.nombre, '') AS nombre_partido, "
                 "SUM(v.total_votos) AS total_votos "
                 "FROM votos_by_ubigeo_partido v "
                 "LEFT JOIN agrupaciones a ON a.partido_id = v.partido_id "
+                f"WHERE v.partido_id NOT IN ({','.join('?' for _ in _NON_CANDIDATE_IDS)}) "
             )
-            params: list[Any] = []
+            params: list[Any] = list(_NON_CANDIDATE_IDS)
             if ubigeos:
                 placeholders = ",".join("?" for _ in ubigeos)
-                sql += f"WHERE v.ubigeo IN ({placeholders}) "
+                sql += f"AND v.ubigeo IN ({placeholders}) "
                 params.extend(sorted(ubigeos))
             sql += "GROUP BY v.partido_id, a.nombre ORDER BY total_votos DESC"
 
