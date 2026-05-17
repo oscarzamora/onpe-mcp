@@ -1401,6 +1401,8 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             re.search(r"\b(\d{4,6})\s+a\s+\d{4,6}\b", q_norm)
             or re.search(r"\bentre\s+(\d{4,6})\s+y\s+\d{4,6}\b", q_norm)
             or re.search(r"\bdel?\s+(\d{4,6})\s+al?\s+\d{4,6}\b", q_norm)
+            or re.search(r"\bdesde\s+(?:la\s+)?mesa\s+(\d{4,6})\s+hasta\s+\d{4,6}\b", q_norm)
+            or re.search(r"\b(\d{4,6})\s+hasta\s+\d{4,6}\b", q_norm)
         )
         _has_performance = "primero" in q_norm or "primer " in q_norm or "gano" in q_norm
         # "mesas XXXX" en plural con performance → prefijo, no mesa individual
@@ -1414,7 +1416,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         )
         # Explicit numeric range with "mesas" plural → range_reasoning even without performance word
         _has_explicit_mesa_range = bool(
-            "mesas" in q_norm and _numeric_range_m
+            ("mesa" in q_norm or "mesas" in q_norm) and _numeric_range_m
         )
         if _has_mesa and _has_range and (_has_performance or _has_explicit_mesa_range):
             mesa_prefix = extract_mesa_prefix_claim(q)
@@ -1937,6 +1939,8 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "cuantos votaron", "quienes votaron",
             # temporales electorales
             "cuando fueron las elecciones", "cuando se realizaron", "fecha de las elecciones",
+            # escrutinio
+            "escrutinios", "escrutinio", "conteo final", "resultado del escrutinio",
         }
         _is_national = any(p in q_norm for p in _NATIONAL_PHRASES)
         # Departamentos peruanos conocidos — para detectar geo sin preposición ("elecciones 2026 Arequipa")
@@ -2471,18 +2475,28 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                 return ok_response(data, started_ms=started_ms)
 
             # Tier 2: Live API (mesa no está en DB local)
-            mesa = onpe_api.get_mesa(code, id_eleccion=max(1, int(id_eleccion)), timeout=max(1, int(timeout)))
-            store.upsert_mesa_bundle(code, mesa, source="onpe_live", id_eleccion=max(1, int(id_eleccion)))
-            store.append_raw_event("onpe_chat_mesa", {"query": q, "codigo_mesa": code, "found": bool(mesa.get("found"))})
-            estado = (mesa.get("mesa_data") or {}).get("estado_acta", "No disponible")
-            data = {
-                "intent": "mesa",
-                "answer": f"Mesa {code}: estado {estado}.",
-                "result": mesa,
-                "source": "onpe_live",
-                "data_tier": "tier_2_onpe_api",
-            }
-            return ok_response(data, started_ms=started_ms)
+            try:
+                mesa = onpe_api.get_mesa(code, id_eleccion=max(1, int(id_eleccion)), timeout=max(1, int(timeout)))
+                store.upsert_mesa_bundle(code, mesa, source="onpe_live", id_eleccion=max(1, int(id_eleccion)))
+                store.append_raw_event("onpe_chat_mesa", {"query": q, "codigo_mesa": code, "found": bool(mesa.get("found"))})
+                estado = (mesa.get("mesa_data") or {}).get("estado_acta", "No disponible")
+                data = {
+                    "intent": "mesa",
+                    "answer": f"Mesa {code}: estado {estado}.",
+                    "result": mesa,
+                    "source": "onpe_live",
+                    "data_tier": "tier_2_onpe_api",
+                }
+                return ok_response(data, started_ms=started_ms)
+            except Exception:
+                return ok_response(
+                    {
+                        "intent": "mesa",
+                        "answer": f"Mesa {code}: no se pudo obtener información en este momento. Intenta de nuevo más tarde.",
+                        "source": "error",
+                    },
+                    started_ms=started_ms,
+                )
 
         qual_notes = get_fallback_qualitative(q_norm)
         fallback_answer = (
