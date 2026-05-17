@@ -1004,6 +1004,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         q = re.sub(r"\bbotos?\b", "votos", q, flags=re.IGNORECASE)  # "botos" → "votos"
         q = re.sub(r"\belecsion\b", "eleccion", q, flags=re.IGNORECASE)  # "elecsion" → "eleccion"
         q = re.sub(r"\bme+s+a\b", "mesa", q, flags=re.IGNORECASE)  # "messa/meesa/messaa" → "mesa"
+        q = re.sub(r"\b(?:msa|msa)\b", "mesa", q, flags=re.IGNORECASE)  # "msa" → "mesa"
         q = re.sub(r"%", " porcentaje ", q)  # "%" → "porcentaje"
         q = re.sub(r"\s{2,}", " ", q).strip()
         # Eliminar muletillas verbales del inicio/fin (normalización lenguaje natural)
