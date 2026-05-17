@@ -148,14 +148,22 @@ _NON_CANDIDATE_EXPRESSIONS: frozenset[str] = frozenset({
     "resultados", "resultado", "top", "primero", "primer", "segundo",
     "tercero", "cuarto", "quinto", "primeros", "votos", "voto",
     "informacion", "info", "dato", "datos",
+    # Pronombres/palabras interrogativas
+    "ganador", "ganadores", "quien", "quienes", "quienes ganaron",
+    "quienes son", "que candidato", "cual candidato",
+    # Frases nacionales que pueden capturar el patrón bare "X en GEO"
+    "mas votados", "los mas votados", "votados", "mas votos",
+    "los que mas votos", "el mas votado",
 })
 
 # Patrón para detectar consultas multi-candidato: "X y Y" o "X e Y"
 _MULTI_CANDIDATE_PATTERN = re.compile(
     r"\bvotos?\s+(?:de\s+)?(.+?)\s+(?:y|e)\s+(.+?)(?:\s+(?:en|a\s+nivel|total)\b.*)?$"
     r"|\b(.+?)\s+y\s+(.+?)\s+cu[aá]ntos?\s+votos?"
-    r"|\bcomparar?\s+(?:a\s+)?(?:votos?\s+(?:de\s+)?)?(.+?)\s+(?:y|con)\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
-    r"|\b([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,40}?)\s+y\s+([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,40}?)\s+en\b",
+    r"|\bcomparar?\s+(?:a\s+)?(?:votos?\s+(?:de\s+)?)?(.+?)\s+(?:y|con|versus|vs\.?)\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
+    r"|\b([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,40}?)\s+y\s+([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,40}?)\s+en\b"
+    r"|\b(.+?)\s+versus\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
+    r"|\bdiferencia\s+(?:de\s+votos?\s+)?entre\s+(.+?)\s+y\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$",
     re.IGNORECASE,
 )
 
@@ -1322,11 +1330,13 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         # Filtrar expresiones que no son nombres de candidato
         if _candidate_from_pattern_early:
             _cfe_norm = _norm(_candidate_from_pattern_early)
+            _cfe_words = set(_cfe_norm.split())
             if (
                 _cfe_norm in _NON_CANDIDATE_EXPRESSIONS
                 or _cfe_norm.startswith("en ")
                 or _cfe_norm.startswith("a nivel")
                 or len(_cfe_norm.strip()) < 3
+                or _cfe_words & _NON_CANDIDATE_EXPRESSIONS  # alguna palabra es stop-word
             ):
                 _candidate_from_pattern_early = None
 
@@ -1336,6 +1346,19 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         if _candidate_from_pattern_early and re.search(r"\s+(?:y|e)\s+", _candidate_from_pattern_early, re.IGNORECASE):
             _parts = re.split(r"\s+(?:y|e)\s+", _candidate_from_pattern_early, flags=re.IGNORECASE)
             _multi_candidates = [p.strip() for p in _parts if p.strip()]
+        elif _candidate_from_pattern_early and re.search(r"\s+(?:versus|vs\.?|con|comparado\s+con)\s+", _candidate_from_pattern_early, re.IGNORECASE):
+            _mc_m2 = _MULTI_CANDIDATE_PATTERN.search(q)
+            if _mc_m2:
+                _mc_groups2 = [g.strip() for g in _mc_m2.groups() if g and g.strip()]
+                if len(_mc_groups2) >= 2:
+                    _multi_candidates = _mc_groups2[:2]
+                    _candidate_from_pattern_early = None
+            if not _multi_candidates:
+                # Fallback: split by versus/vs/comparado con
+                _parts2 = re.split(r"\s+(?:versus|vs\.?|comparado\s+con)\s+", _candidate_from_pattern_early, flags=re.IGNORECASE)
+                if len(_parts2) >= 2:
+                    _multi_candidates = [p.strip() for p in _parts2 if p.strip()]
+                    _candidate_from_pattern_early = None
         elif not _candidate_from_pattern_early:
             _mc_m = _MULTI_CANDIDATE_PATTERN.search(q)
             if _mc_m:
@@ -1533,11 +1556,15 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "a nivel de peru", "peru entero", "todo el pais",
             "quien gano las elecciones", "quien fue el ganador",
             "top candidatos", "top de candidatos",
+            "candidatos con mas votos", "candidatos mas votados",
+            "mas votados", "los mas votados",
         }
         _is_national = any(p in q_norm for p in _NATIONAL_PHRASES)
         if not _is_national and re.search(r"\b(top|primeros?\s+\d+)\b", q_norm) and (
             "nacional" in q_norm or "pais" in q_norm
         ):
+            _is_national = True
+        if not _is_national and re.search(r"\bm[aá]s\s+votos\b", q_norm) and "candidatos" in q_norm:
             _is_national = True
 
         if _is_national:
