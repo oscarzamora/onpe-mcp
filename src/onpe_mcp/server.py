@@ -68,7 +68,7 @@ _CANDIDATE_VOTE_PATTERNS = [
     # acepta "en total", "fue que" intercalados: "cuántos votos fue que obtuvo X"
     # acepta typos b/v frecuentes en español peruano: tubo/obtubo/obtubieron
     re.compile(
-        r"\bcu[aá]ntos?\s+votos?\s+(?:en\s+total\s+|fue\s+que\s+|se\s+)?(?:tuvo|tuvieron|tubo|tubieron|sac[oó]|sacaron|tiene|tienen|obtuvo|obtuvieron|obtubo|obtubieron|gan[oó]|ganaron|logr[oó]|lograron|consigui[oó]|consiguieron|recibi[oó]|recibieron|junt[oó]|juntaron|lleva|llevan|lleba|lleban|llev[oó]|llevaron|acumula|acumulan|acumul[oó]|sum[oó]|sumaron|lleg[oó]|llegaron|alcanz[oó]|alcanzaron|adjudic[oó])\s+(.+?)(?:\s+(?:en|a\s+nivel|para)\b.*)?$",
+        r"\bcu[aá]ntos?\s+votos?\s+(?:en\s+total\s+|fue\s+que\s+|se\s+)?(?:tuvo|tuvieron|tubo|tubieron|sac[oó]|sacaron|tiene|tienen|obtuvo|obtuvieron|obtubo|obtubieron|gan[oó]|ganaron|logr[oó]|lograron|consigui[oó]|consiguieron|recibi[oó]|recibieron|junt[oó]|juntaron|lleva|llevan|lleba|lleban|llev[oó]|llevaron|acumula|acumulan|acumul[oó]|sum[oó]|sumaron|lleg[oó]|llegaron|alcanz[oó]|alcanzaron|adjudic[oó]|capt[oó]|captaron|hizo|hicieron)\s+(.+?)(?:\s+(?:en|a\s+nivel|para)\b.*)?$",
         re.IGNORECASE,
     ),
     # "cuánto sacó/obtuvo X" / "que porcentaje obtuvo X" — también plural "cuántos"
@@ -885,6 +885,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "hotel", "hoteles", "restaurante", "turismo", "vuelos", "hospedaje",
             "ingles", "frances", "idioma", "traducir", "traduccion",
             "plato", "comida", "gastronomia", "receta", "ingredientes",
+            "mundial", "campeonato", "torneo", "copa", "deporte", "futbol", "olimpiadas",
         })
         # "tiempo" alone is ambiguous; only block if paired with weather words
         # "cuanto vale" = pricing query → non-electoral
@@ -932,8 +933,15 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                 started_ms=started_ms,
             )
 
-        # Detectar preguntas de significado/definición → unknown
-        if re.search(r"\bqu[eé]\s+significa\b|\bqu[eé]\s+(?:es|son)\s+(?:la|el|los|las)\s+(?:abstenci[oó]n|padr[oó]n|sufragio|escrutinio|ballot)\b|\bcomo\s+se\s+dice\b|\bcomo\s+se\s+traduce\b", _q_norm_guard):
+        # Detectar preguntas de significado/definición/receta → unknown
+        if re.search(
+            r"\bqu[eé]\s+significa\b"
+            r"|\bqu[eé]\s+(?:es|son)\s+(?:la|el|los|las)\s+(?:abstenci[oó]n|padr[oó]n|sufragio|escrutinio|ballot)\b"
+            r"|\bcomo\s+se\s+dice\b|\bcomo\s+se\s+traduce\b"
+            r"|\bcomo\s+se\s+(?:hace|prepara|cocina|elabora)\b"
+            r"|\bqu[eé]\s+ingredientes\b|\breceta\s+de\b",
+            _q_norm_guard,
+        ):
             return ok_response(
                 {
                     "intent": "unknown",
@@ -1450,7 +1458,8 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             re.search(r"\b(\d{4,6})\s+a\s+(?:la\s+|el\s+)?\d{4,6}\b", q_norm)
             or re.search(r"\bentre\s+(\d{4,6})\s+y\s+\d{4,6}\b", q_norm)
             or re.search(r"\bdel?\s+(\d{4,6})\s+al?\s+\d{4,6}\b", q_norm)
-            or re.search(r"\bdesde\s+(?:la\s+)?mesa\s+(\d{4,6})\s+hasta\s+\d{4,6}\b", q_norm)
+            or re.search(r"\bdesde\s+(?:la\s+)?mes[a]+s?\s+(\d{4,6})\s+hasta\s+\d{4,6}\b", q_norm)
+            or re.search(r"\bdesde\s+(?:el\s+|la\s+)?(\d{4,6})\s+(?:hasta|al)\s+(?:el\s+|la\s+)?\d{4,6}\b", q_norm)
             or re.search(r"\b(\d{4,6})\s+hasta\s+\d{4,6}\b", q_norm)
         )
         _has_performance = "primero" in q_norm or "primer " in q_norm or "gano" in q_norm
