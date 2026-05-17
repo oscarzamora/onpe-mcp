@@ -63,23 +63,74 @@ _foreign_catalog_synced: bool = False
 # Patrones para detectar consultas de votos por candidato sin keyword "candidato".
 # Compilados una vez a nivel de módulo para evitar overhead por llamada.
 _CANDIDATE_VOTE_PATTERNS = [
+    # "cuántos votos sacó/tuvo/obtuvo/logró/consiguió/recibió/juntó X"
     re.compile(
-        r"\bcu[aá]ntos?\s+votos?\s+(?:tuvo|sac[oó]|tiene|obtuvo|gan[oó]|logr[oó])\s+(.+?)(?:\s+(?:en|a\s+nivel|para|total|en\s+total)\b.*)?$",
+        r"\bcu[aá]ntos?\s+votos?\s+(?:tuvo|sac[oó]|tiene|obtuvo|gan[oó]|logr[oó]|consigui[oó]|recibi[oó]|junt[oó])\s+(.+?)(?:\s+(?:en|a\s+nivel|para|total|en\s+total)\b.*)?$",
+        re.IGNORECASE,
+    ),
+    # "cuánto sacó/obtuvo/logró/llevó/anotó/juntó X" (sin "votos")
+    re.compile(
+        r"\bcu[aá]nto\s+(?:sac[oó]|obtuvo|logr[oó]|llev[oó]|anot[oó]|junt[oó]|consigui[oó]|recibi[oó]|tiene)\s+(.+?)(?:\s+(?:en|a\s+nivel|total|en\s+total)\b.*)?$",
+        re.IGNORECASE,
+    ),
+    # "votos de X" / "votos totales de X" / "número de votos de X"
+    re.compile(
+        r"\bvotos?\s+(?:totales?\s+)?(?:de|que\s+(?:sac[oó]|tuvo|obtuvo|logr[oó]))\s+(.+?)(?:\s+(?:en|a\s+nivel|total|nacional)\b.*)?$",
         re.IGNORECASE,
     ),
     re.compile(
-        r"\bvotos?\s+(?:de|que\s+(?:sac[oó]|tuvo|obtuvo|logr[oó]))\s+(.+?)(?:\s+(?:en|a\s+nivel|total)\b.*)?$",
+        r"\bn[uú]mero\s+de\s+votos?\s+de\s+(.+?)(?:\s+(?:en|a\s+nivel|total|nacional)\b.*)?$",
         re.IGNORECASE,
     ),
+    # "qué resultados tuvo/obtuvo/sacó X"
     re.compile(
         r"\bqu[eé]\s+(?:result(?:ados?|[oó])|votos?)\s+(?:tuvo|obtuvo|sac[oó])\s+(.+?)$",
         re.IGNORECASE,
     ),
+    # "resultados de X" / "resultados nacionales de X" / "puntaje de X"
     re.compile(
-        r"\b(?:result(?:ados?|[oó])\s+de|puntaje\s+de)\s+(.+?)(?:\s+(?:en|a\s+nivel|total)\b.*)?$",
+        r"\b(?:result(?:ados?|[oó])(?:\s+\w+)?\s+de|puntaje\s+de)\s+(.+?)(?:\s+(?:en|a\s+nivel|total|nacional)\b.*)?$",
+        re.IGNORECASE,
+    ),
+    # "votación de X" / "votación total de X"
+    re.compile(
+        r"\bvotaci[oó]n\s+(?:total\s+)?(?:de\s+)?(.+?)(?:\s+(?:en|a\s+nivel|total|nacional)\b.*)?$",
+        re.IGNORECASE,
+    ),
+    # "marcador de X" / "puntuación de X" / "performance de X" / "ranking de X"
+    re.compile(
+        r"\b(?:marcador|puntuaci[oó]n|performance|ranking|resumen\s+de\s+votos)\s+de\s+(.+?)(?:\s+(?:en|a\s+nivel|total|nacional)\b.*)?$",
+        re.IGNORECASE,
+    ),
+    # "qué lugar sacó X" / "qué posición tiene X"
+    re.compile(
+        r"\bqu[eé]\s+(?:lugar|posici[oó]n|puesto)\s+(?:sac[oó]|tiene|obtuvo|qued[oó])\s+(.+?)$",
+        re.IGNORECASE,
+    ),
+    # "X cuántos votos" (order reversed)
+    re.compile(
+        r"^(.+?)\s+cu[aá]ntos?\s+votos?(?:\s+(?:sac[oó]|tuvo|tiene|obtuvo))?",
         re.IGNORECASE,
     ),
 ]
+
+# Aliases culturales/coloquiales para candidatos.
+# Clave: expresión normalizada (lowercase, sin tildes).
+# Valor: fragmento del nombre canónico del candidato en candidato.txt.
+# Se usa cuando el candidato pedido no existe en 2026 para dar una sugerencia.
+_CANDIDATE_CULTURAL_ALIASES: dict[str, str] = {
+    # Pedro Castillo (2021) → su equivalente "del sombrero" en 2026 es Roberto Sánchez
+    "pedro castillo": "sanchez",
+    "castillo":       "sanchez",
+    # Referencias directas al sombrero
+    "sombrero":                 "sanchez",
+    "del sombrero":             "sanchez",
+    "el del sombrero":          "sanchez",
+    "el sombrero":              "sanchez",
+    "hombre del sombrero":      "sanchez",
+    "candidato del sombrero":   "sanchez",
+    "candidato sombrero":       "sanchez",
+}
 
 
 def _try_bootstrap_snapshot_on_startup() -> None:
@@ -807,16 +858,23 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         }
         _DESCRIBE_MESA_WORDS = {
             "que son las", "que hay en", "donde estan", "cuantas hay", "cuantas son",
-            "cuantas existen", "son reales", "son reales", "existen realmente",
+            "cuantas existen", "son reales", "existen realmente",
             "existen de verdad", "cuantas mesas", "informacion sobre",
             "que lugar", "en que lugar", "que mesas",
         }
         _has_existence_deny = any(w in q_norm for w in _EXISTENCE_DENY_WORDS)
         _has_describe_mesa = any(w in q_norm for w in _DESCRIBE_MESA_WORDS)
+        # "existen" / "existen las mesas" / "las mesas XK existen" como standalone
+        if not _has_describe_mesa and not _has_existence_deny:
+            if re.search(r"\bexist[ei]\w*\b", q_norm):
+                _has_describe_mesa = True
+
+        # Excluir: código exacto de 6 dígitos con keyword "mesa" → es mesa directa, no rango
+        _prefix_is_full_code = bool(_prefix_m and len(_prefix_m.group(1)) == 6 and _has_mesa_kw)
 
         if _has_mesa_kw and _has_prefix_num and (_has_existence_deny or _has_describe_mesa) and not (
             "primero" in q_norm or "gano" in q_norm or "gana" in q_norm
-        ):
+        ) and not _prefix_is_full_code:
             mesa_prefix = _prefix_m.group(1)  # type: ignore[union-attr]
             coverage = _build_coverage_block(q_norm, id_eleccion, timeout, prefix=mesa_prefix)
             description = store.describe_mesa_prefix(mesa_prefix)
@@ -1222,10 +1280,225 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             }
             return ok_response(data, started_ms=started_ms)
 
-        # ── Geo doméstica PRIMERO (departamento/provincia/distrito peruano) ───
-        # Se verifica antes que la extranjera para evitar que Lima, Loreto, etc.
-        # activen el costoso auto-sync del catálogo extranjero (700ms).
-        domestic_result = _resolve_domestic_geo_query(q)
+        # ── Candidato ANTES de geo Y nacional ───────────────────────────────
+        # ORDEN CRÍTICO: candidato primero para que apellidos como Castillo,
+        # Urresti, Sánchez no se confundan con distritos RENIEC, y para que
+        # "cuántos votos sacó Keiko a nivel nacional" no active el bloque nacional.
+        _candidate_from_pattern_early: str | None = None
+        if "candidato" not in q_norm and "mesa" not in q_norm:
+            for _vp in _CANDIDATE_VOTE_PATTERNS:
+                _vm = _vp.search(q)
+                if _vm:
+                    _candidate_from_pattern_early = _vm.group(1).strip()
+                    break
+
+        if _candidate_from_pattern_early or "candidato" in q_norm:
+            _cand_map_early = store.load_candidate_map(settings.source_dir / "candidato.txt")
+            _aggs_early = store.aggregate_votes_by_party()
+            _expr_early = _norm(_candidate_from_pattern_early or q)
+            _match_early = None
+            for _item in _aggs_early:
+                _pid = str(_item["partido_id"])
+                _cname = _cand_map_early.get(_pid, "")
+                if _expr_early and (
+                    _expr_early in _norm(_cname) or _expr_early in _norm(str(_item["nombre_partido"]))
+                ):
+                    _match_early = {**_item, "candidato": _cname}
+                    break
+
+            if _match_early is not None:
+                _rank_early = next(
+                    (i for i, it in enumerate(_aggs_early, 1) if str(it["partido_id"]) == str(_match_early["partido_id"])),
+                    None,
+                )
+                _ans_early = (
+                    f"Candidato {_match_early.get('candidato') or 'sin mapeo'} "
+                    f"(partido {_match_early['partido_id']}) tiene {int(_match_early['total_votos']):,} votos "
+                    f"y posición {_rank_early} en el consolidado actual."
+                )
+                data = {
+                    "intent": "candidate",
+                    "answer": _ans_early,
+                    "result": {**_match_early, "rank": _rank_early, "total_partidos": len(_aggs_early)},
+                    "source": "sqlite",
+                    "data_tier": "tier_1_local_cache",
+                }
+                store.append_raw_event("onpe_chat_candidate", {"query": q, "partido_id": _match_early["partido_id"]})
+                return ok_response(data, started_ms=started_ms)
+            elif _candidate_from_pattern_early:
+                # El patrón detectó una consulta de candidato pero no hay match.
+                # Antes de devolver "no encontré", verificar que la expresión no sea
+                # un lugar geográfico (ej: "resultados de Arequipa" → geo, no candidato).
+                # Verificación estricta: solo consideramos geo si el nombre
+                # completo coincide exactamente con un departamento, provincia o
+                # distrito (sin token fallback), para evitar que "Pedro Castillo"
+                # coincida con "José Crespo y Castillo" o "Daniel Urresti" con
+                # "Daniel Alcides Carrión".
+                _expr_norm_geo = _norm(_candidate_from_pattern_early)
+                with store._connect() as _geo_chk_conn:
+                    _geo_chk_conn.create_function("norm_py", 1, _norm)
+                    _geo_chk = _geo_chk_conn.execute(
+                        "SELECT 1 FROM ubigeo_reniec "
+                        "WHERE norm_py(departamento)=? OR norm_py(provincia)=? OR norm_py(distrito)=? LIMIT 1",
+                        (_expr_norm_geo, _expr_norm_geo, _expr_norm_geo),
+                    ).fetchone()
+                _expr_is_geo = _geo_chk is not None
+                if not _expr_is_geo:
+                    _known = ", ".join(sorted({v for v in _cand_map_early.values() if v})[:10])
+                    # Buscar sugerencia cultural (ej: "castillo" → Sánchez por sombrero)
+                    _cultural_hint: str | None = None
+                    _expr_for_alias = _norm(_candidate_from_pattern_early or q)
+                    for _alias, _target in _CANDIDATE_CULTURAL_ALIASES.items():
+                        if _alias in _expr_for_alias:
+                            _hint_item = next(
+                                (it for it in _aggs_early if _target in _norm(_cand_map_early.get(str(it["partido_id"]), ""))),
+                                None,
+                            )
+                            if _hint_item:
+                                _cultural_hint = _cand_map_early.get(str(_hint_item["partido_id"]))
+                            break
+                    _hint_text = (
+                        f"\n💡 ¿Quizás te refieres a **{_cultural_hint}**? "
+                        f"Es el candidato de 2026 también conocido por usar sombrero."
+                        if _cultural_hint else ""
+                    )
+                    data = {
+                        "intent": "candidate",
+                        "answer": (
+                            f"No encontré al candidato '{_candidate_from_pattern_early}' en los resultados "
+                            f"de las elecciones generales 2026.{_hint_text} "
+                            f"Algunos candidatos disponibles: {_known}…"
+                        ),
+                        "result": {
+                            "query": _candidate_from_pattern_early,
+                            "found": False,
+                            "cultural_hint": _cultural_hint,
+                        },
+                        "source": "sqlite",
+                    }
+                    return ok_response(data, started_ms=started_ms)
+                # Si es geo, caemos al bloque geo_domestic abajo
+
+        # ── Nacional / "todo el Perú" / "a nivel nacional" ──────────────────
+        # Va DESPUÉS del candidato para que "cuántos votos sacó Keiko a nivel
+        # nacional" se resuelva como candidato, no como consulta nacional.
+        _NATIONAL_PHRASES = {
+            "a nivel nacional", "todo el peru", "a nivel del peru",
+            "nivel nacional", "todo peru", "en el peru", "resultados nacionales",
+            "a nivel de peru", "peru entero", "todo el pais",
+        }
+        _is_national = any(p in q_norm for p in _NATIONAL_PHRASES)
+        if not _is_national and re.search(r"\b(top|primeros?\s+\d+)\b", q_norm) and (
+            "nacional" in q_norm or "pais" in q_norm
+        ):
+            _is_national = True
+
+        if _is_national:
+            _nat_aggs = store.aggregate_votes_by_party()
+            _nat_top = _nat_aggs[:top_n]
+            _nat_total = sum(int(t.get("total_votos", 0)) for t in _nat_aggs)
+            _cmap_nat = store.load_candidate_map(settings.source_dir / "candidato.txt")
+            with store._connect() as _nc:
+                _nat_row = _nc.execute("SELECT COUNT(*) AS c FROM mesas_data").fetchone()
+                _nat_mesas = int(_nat_row["c"] if _nat_row else 0)
+            if _nat_top and _nat_total > 0:
+                _nat_lines = [f"**Top {min(top_n, len(_nat_top))} a nivel nacional** ({_nat_mesas:,} mesas · {_nat_total:,} votos)\n"]
+                for _ni, _nt in enumerate(_nat_top, 1):
+                    _pct = int(_nt["total_votos"]) / _nat_total * 100
+                    _nname = _cmap_nat.get(str(_nt.get("partido_id", ""))) or _nt["nombre_partido"]
+                    _nat_lines.append(f"{_ni}. **{_nname}** — {int(_nt['total_votos']):,} votos ({_pct:.1f}%)")
+                _nat_ans = "\n".join(_nat_lines)
+            else:
+                _nat_ans = "No hay votos consolidados en el cache local todavía."
+            data = {
+                "intent": "geo_domestic",
+                "answer": _nat_ans,
+                "result": {"scope": "nacional", "top": _nat_top, "total_votos": _nat_total, "mesas": _nat_mesas},
+                "source": "sqlite",
+                "data_tier": "tier_1_local_cache",
+            }
+            store.append_raw_event("onpe_chat_nacional", {"query": q})
+            return ok_response(data, started_ms=started_ms)
+
+        # ── Geo doméstica (departamento/provincia/distrito peruano) ─────────
+        # Antes de consultar RENIEC, verificamos si algún token del query
+        # corresponde exactamente a un país en foreign_catalog. Si sí,
+        # saltamos geo_domestic para evitar falsos positivos como
+        # "Chile" → "Chilete", "Canadá" → "Encañada".
+        _STOPWORDS_GEO = {"top", "en", "de", "los", "las", "que", "fue", "son", "hay"}
+        _q_tokens_geo = [t for t in q_norm.split() if len(t) >= 4 and t not in _STOPWORDS_GEO]
+        _has_foreign_country = False
+        if _q_tokens_geo:
+            with store._connect() as _gc:
+                # Incluye países Y ciudades para detectar "Buenos Aires", "Miami", etc.
+                _fc_geos: set[str] = set()
+                for _r in _gc.execute("SELECT DISTINCT pais FROM foreign_catalog WHERE pais != ''").fetchall():
+                    _fc_geos.add(_norm(_r["pais"]))
+                for _r in _gc.execute("SELECT DISTINCT ciudad FROM foreign_catalog WHERE ciudad != ''").fetchall():
+                    _fc_geos.add(_norm(_r["ciudad"]))
+            # Agrega prefijos de nombres multi-palabra: "estados unidos de america" → "estados unidos"
+            _fc_geos_ext = set(_fc_geos)
+            for _fg in _fc_geos:
+                _fg_parts = _fg.split()
+                for _k in range(2, len(_fg_parts)):
+                    _fc_geos_ext.add(" ".join(_fg_parts[:_k]))
+            # Coincidencia exacta de token: "chile", "suecia", "miami", etc.
+            for _tok in _q_tokens_geo:
+                if _tok in _fc_geos_ext:
+                    _has_foreign_country = True
+                    break
+            # Coincidencia por frase multi-token: "estados unidos", "buenos aires"
+            # Requiere que la frase NO sea prefijo de un nombre doméstico más largo,
+            # ej: "san juan" NO debe coincidir en "san juan de lurigancho".
+            if not _has_foreign_country:
+                _JOINERS = {"de", "del", "la", "el", "los", "las", "y", "e", "o"}
+                for _fp in sorted(_fc_geos_ext, key=len, reverse=True):
+                    if " " in _fp and _fp in q_norm:
+                        _fp_end = q_norm.find(_fp) + len(_fp)
+                        _after_words = [
+                            w for w in q_norm[_fp_end:].split()
+                            if w.isalpha() and w not in _JOINERS
+                        ]
+                        if not _after_words:
+                            _has_foreign_country = True
+                            break
+
+        # Detectar geo ambigua: coincide con doméstico Y extranjero → pedir aclaración.
+        # Solo es genuinamente ambigua si el nombre doméstico aparece textualmente en la
+        # consulta (no solo via token fallback). Ej: "Buenos Aires" sí aparece, pero
+        # "Chilete" no aparece en "top 5 en Chile" → falso positivo, preferir extranjero.
+        _domestic_attempt = _resolve_domestic_geo_query(q)
+        if _has_foreign_country and _domestic_attempt is not None:
+            _dom_name_amb, _ = _domestic_attempt
+            _dom_name_in_query = _norm(_dom_name_amb) in q_norm
+            if _dom_name_in_query:
+                _foreign_name_amb = next(
+                    (fp.title() for fp in sorted(_fc_geos_ext, key=len, reverse=True) if fp in q_norm),
+                    "exterior",
+                )
+                data = {
+                    "intent": "ambiguous",
+                    "answer": (
+                        f"Tu consulta '{q}' puede referirse a dos lugares:\n"
+                        f"  • **{_foreign_name_amb}** — peruanos votando en el exterior\n"
+                        f"  • **{_dom_name_amb.title()}** — territorio dentro del Perú\n\n"
+                        f"¿A cuál te refieres? Puedes especificar, por ejemplo: "
+                        f"'resultados de peruanos en {_foreign_name_amb}' o "
+                        f"'resultados en {_dom_name_amb.title()}, Perú'."
+                    ),
+                    "result": {
+                        "options": [
+                            {"tipo": "extranjero", "nombre": _foreign_name_amb},
+                            {"tipo": "domestico", "nombre": _dom_name_amb.title()},
+                        ]
+                    },
+                    "source": "sqlite",
+                }
+                store.append_raw_event("onpe_chat_ambiguous", {"query": q})
+                return ok_response(data, started_ms=started_ms)
+            # Falso positivo doméstico — preferir extranjero
+
+        domestic_result = None if _has_foreign_country else _domestic_attempt
         if domestic_result is not None:
             dept_name, ubigeos_dept = domestic_result
 
