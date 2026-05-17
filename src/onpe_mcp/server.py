@@ -90,9 +90,9 @@ _CANDIDATE_VOTE_PATTERNS = [
         r"\bqu[eé]\s+(?:result(?:ados?|[oó])|votos?)\s+(?:tuvo|obtuvo|sac[oó])\s+(.+?)$",
         re.IGNORECASE,
     ),
-    # "resultados de X" / "resultados nacionales de X" / "puntaje de X"
+    # "resultados de X" / "resultados nacionales de X" / "puntaje de X" / "resultados del X"
     re.compile(
-        r"\b(?:result(?:ados?|[oó])(?:\s+\w+)?\s+de|puntaje\s+de)\s+(.+?)(?:\s+(?:en|a\s+nivel|total|nacional)\b.*)?$",
+        r"\b(?:result(?:ados?|[oó])(?:\s+\w+)?\s+(?:de|del)|puntaje\s+(?:de|del))\s+(.+?)(?:\s+(?:en|a\s+nivel|total|nacional)\b.*)?$",
         re.IGNORECASE,
     ),
     # "votación de X" / "votación total de X"
@@ -1452,13 +1452,21 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                 _vm = _vp.search(q)
                 if _vm:
                     _cfe_cand = _vm.group(1).strip()
+                    # Eliminar artículo/honorífico inicial: "el doctor X" → "X", "el ingeniero X" → "X"
+                    _cfe_cand = re.sub(
+                        r"^(?:el|la|los|las|un|una)\s+(?:doctor[a]?|dr\.?|ing\.?|ingeniero[a]?|licenciado[a]?|lic\.?|profesor[a]?|prof\.?|señor[a]?|don|doña)\s+",
+                        "", _cfe_cand, flags=re.IGNORECASE
+                    ).strip()
+                    # Si después del artículo no hay honorífico, al menos quitar "el/la" inicial
+                    _cfe_cand = re.sub(r"^(?:el|la)\s+(?=[A-ZÁÉÍÓÚÑ])", "", _cfe_cand).strip()
                     _cfe_n = _norm(_cfe_cand)
                     _cfe_w = set(_cfe_n.split())
                     if (
                         _cfe_n not in _NON_CANDIDATE_EXPRESSIONS
                         and not _cfe_n.startswith("en ")
                         and not _cfe_n.startswith("a nivel")
-                        and not re.match(r"(?:para|hacia|desde|del?)\s", _cfe_n)
+                        and not re.match(r"(?:para|hacia|desde)\s", _cfe_n)
+                        and not re.fullmatch(r"\d+", _cfe_n.strip())  # no son candidatos números puros
                         and len(_cfe_n.strip()) >= 3
                         and not (_cfe_w & _NON_CANDIDATE_EXPRESSIONS)
                     ):
@@ -1708,6 +1716,12 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "todos los partidos", "partidos politicos", "cada partido",
             "resumen de votos", "listado de candidatos", "listado completo",
             "resumen de elecciones", "resumen electoral", "reporte electoral",
+            # votos especiales
+            "votos en blanco", "votos nulos", "votos viciados",
+            "en blanco", "votos blancos", "votos invalidos",
+            # referencias temporales a elecciones
+            "elecciones 2026", "elecciones 2021", "elecciones del 2026", "elecciones del 2021",
+            "resultados 2026", "resultados 2021",
         }
         _is_national = any(p in q_norm for p in _NATIONAL_PHRASES)
         # Guard: "en/de" seguido de un nombre real (no artículo/colectivo/número) → hay contexto geo
@@ -1734,6 +1748,9 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             _is_national = True
         # "primera vuelta" / "segunda vuelta" sin geo explícita → nacional
         if not _is_national and re.search(r"\b(?:primera|segunda)\s+vuelta\b", q_norm) and not _GEO_IN_Q:
+            _is_national = True
+        # "resultados de/del/en AÑO" → nacional (año de elecciones sin lugar)
+        if not _is_national and re.search(r"\b(?:resultados?|elecciones?)\s+(?:de[l]?\s+)?\d{4}\b", q_norm) and not _GEO_IN_Q:
             _is_national = True
         # "quienes ganaron/superaron/consiguieron" sin geo → nacional; con "en PLACE" → geo_domestic
         if not _is_national and re.search(r"\bquienes?\s+(?:son\s+(?:los\s+)?)?(?:gan[ao]ron?|lider(?:es)?|superaron|consiguieron|obtuvieron|tuvieron)\b", q_norm):
@@ -2044,12 +2061,20 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                 _vm = _vp.search(q)
                 if _vm:
                     _late_cand = _vm.group(1).strip()
+                    # Strip artículo+honorífico inicial
+                    _late_cand = re.sub(
+                        r"^(?:el|la|los|las|un|una)\s+(?:doctor[a]?|dr\.?|ing\.?|ingeniero[a]?|licenciado[a]?|lic\.?|profesor[a]?|prof\.?|señor[a]?|don|doña)\s+",
+                        "", _late_cand, flags=re.IGNORECASE
+                    ).strip()
+                    _late_cand = re.sub(r"^(?:el|la)\s+(?=[A-ZÁÉÍÓÚÑ])", "", _late_cand).strip()
                     _late_n = _norm(_late_cand)
                     _late_w = set(_late_n.split())
                     if (
                         _late_n not in _NON_CANDIDATE_EXPRESSIONS
                         and not _late_n.startswith("en ")
                         and not _late_n.startswith("a nivel")
+                        and not re.match(r"(?:para|hacia|desde)\s", _late_n)
+                        and not re.fullmatch(r"\d+", _late_n.strip())  # no son candidatos números puros
                         and len(_late_n.strip()) >= 3
                         and not (_late_w & _NON_CANDIDATE_EXPRESSIONS)
                     ):
