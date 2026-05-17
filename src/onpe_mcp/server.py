@@ -1698,31 +1698,34 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "al pais", "en el pais", "todo el pais", "el pais",
             "todos los partidos", "partidos politicos", "cada partido",
             "resumen de votos", "listado de candidatos", "listado completo",
+            "resumen de elecciones", "resumen electoral", "reporte electoral",
         }
         _is_national = any(p in q_norm for p in _NATIONAL_PHRASES)
+        # Guard: "en" seguido de un nombre (no artículo) → hay contexto geo → no nacional
+        _GEO_IN_Q = re.search(r"\ben\s+(?!(?:el|la|los|las|un|una|lo|este|ese)\b)\w", q_norm)
         if not _is_national and re.search(r"\b(top\s*\d*|\d+\s+primeros?|primeros?\s+\d+)\b", q_norm) and (
             "nacional" in q_norm or "pais" in q_norm or "peru" in q_norm
-            or ("candidatos" in q_norm and not re.search(r"\ben\s+\w", q_norm))
+            or ("candidatos" in q_norm and not _GEO_IN_Q)
         ):
             _is_national = True
-        if not _is_national and re.search(r"\bm[aá]s\s+votos\b", q_norm) and "candidatos" in q_norm:
+        if not _is_national and re.search(r"\bm[aá]s\s+votos\b", q_norm) and "candidatos" in q_norm and not _GEO_IN_Q:
             _is_national = True
         # "dame el top 5" / "top 3" sin contexto geográfico → nacional
-        if not _is_national and re.search(r"\btop\s+\d+\b", q_norm) and not re.search(r"\ben\s+\w", q_norm):
+        if not _is_national and re.search(r"\btop\s+\d+\b", q_norm) and not _GEO_IN_Q:
             _is_national = True
         # "todos" + (candidatos|resultados|votos) sin geo → nacional
         if not _is_national and "todos" in q_norm and not re.search(r"\b(?:en|de)\s+\w", q_norm):
             if "candidatos" in q_norm or "resultados" in q_norm or "votos" in q_norm:
                 _is_national = True
         # "candidatos/candidato" sin geo → nacional (ej: "cuántos candidatos se presentaron")
-        if not _is_national and re.search(r"\bcandidatos?\b", q_norm) and not re.search(r"\ben\s+\w", q_norm):
+        if not _is_national and re.search(r"\bcandidatos?\b", q_norm) and not _GEO_IN_Q:
             _is_national = True
         # "primera vuelta" / "segunda vuelta" sin geo explícita → nacional
-        if not _is_national and re.search(r"\b(?:primera|segunda)\s+vuelta\b", q_norm) and not re.search(r"\ben\s+\w", q_norm):
+        if not _is_national and re.search(r"\b(?:primera|segunda)\s+vuelta\b", q_norm) and not _GEO_IN_Q:
             _is_national = True
         # "quienes ganaron" sin geo → nacional; con "en PLACE" → geo_domestic
         if not _is_national and re.search(r"\bquienes?\s+(?:son\s+(?:los\s+)?)?(?:gan[ao]ron?|lider(?:es)?)\b", q_norm):
-            if not re.search(r"\ben\s+\w", q_norm):
+            if not _GEO_IN_Q:
                 _is_national = True
 
         if _is_national:
@@ -2024,7 +2027,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         # Detecta tanto "candidato X" como "cuántos votos tuvo/sacó X", "votos de X", etc.
         # Los patrones están compilados a nivel de módulo (_CANDIDATE_VOTE_PATTERNS).
         _candidate_from_pattern: str | None = None
-        if "candidato" not in q_norm and "mesa" not in q_norm:
+        if not re.search(r'\bcandidato\b', q_norm) and "mesa" not in q_norm:
             for _vp in _CANDIDATE_VOTE_PATTERNS:
                 _vm = _vp.search(q)
                 if _vm:
@@ -2041,10 +2044,10 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                         _candidate_from_pattern = _late_cand
                         break
 
-        if "candidato" in q_norm or _candidate_from_pattern:
+        if bool(re.search(r'\bcandidato\b', q_norm)) or _candidate_from_pattern:
             # Priorizar el nombre extraído por patrón sobre la query completa
             candidate_expr = _candidate_from_pattern or q
-            if "candidato" in q_norm:
+            if re.search(r'\bcandidato\b', q_norm):
                 match = re.search(r"candidato\s+(.+)$", q, flags=re.IGNORECASE)
                 if match:
                     candidate_expr = match.group(1).strip()
