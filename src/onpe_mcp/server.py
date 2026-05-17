@@ -69,15 +69,15 @@ _CANDIDATE_VOTE_PATTERNS = [
     # acepta typos b/v frecuentes en español peruano: tubo/obtubo/obtubieron
     # acepta "había/habría obtenido" (pluscuamperfecto / condicional compuesto)
     re.compile(
-        r"\bcu[aá]ntos?\s+votos?\s+(?:en\s+total\s+|fue\s+que\s+|se\s+|habr?[ií]a\s+|hab[ií]a\s+)?(?:tuvo|tuvieron|tubo|tubieron|sac[oó]|sacaron|tiene|tienen|obtuvo|obtuvieron|obtubo|obtubieron|gan[oó]|ganaron|logr[oó]|lograron|consigui[oó]|consiguieron|recibi[oó]|recibieron|junt[oó]|juntaron|lleva|llevan|lleba|lleban|llev[oó]|llevaron|acumula|acumulan|acumul[oó]|sum[oó]|sumaron|lleg[oó]|llegaron|alcanz[oó]|alcanzaron|adjudic[oó]|adjudicados?|asign[oó]|asignados?|otorg[oó]|otorgados?|atribuy[oó]|capt[oó]|captaron|hizo|hicieron|reuni[oó]|reunieron|jal[oó]|jalaron|chap[oó]|chaparon|pesc[oó]|pescaron|dispone|disponia|dispuso|obtenido|logrado|conseguido|sacado|ganado|recibido|juntado|alcanzado|captado)\s+(.+?)(?:\s+(?:en|a\s+nivel|para)\b.*)?$",
+        r"\bcu[aá]ntos?\s+(?:votos?|sufragios?)\s+(?:en\s+total\s+|fue\s+que\s+|se\s+|habr?[ií]a\s+|hab[ií]a\s+)?(?:tuvo|tuvieron|tubo|tubieron|sac[oó]|sacaron|tiene|tienen|obtuvo|obtuvieron|obtubo|obtubieron|gan[oó]|ganaron|logr[oó]|lograron|consigui[oó]|consiguieron|recibi[oó]|recibieron|junt[oó]|juntaron|lleva|llevan|lleba|lleban|llev[oó]|llevaron|acumula|acumulan|acumul[oó]|sum[oó]|sumaron|lleg[oó]|llegaron|alcanz[oó]|alcanzaron|adjudic[oó]|adjudicados?|asign[oó]|asignados?|otorg[oó]|otorgados?|atribuy[oó]|capt[oó]|captaron|hizo|hicieron|reuni[oó]|reunieron|jal[oó]|jalaron|chap[oó]|chaparon|pesc[oó]|pescaron|dispone|disponia|dispuso|obtenido|logrado|conseguido|sacado|ganado|recibido|juntado|alcanzado|captado)\s+(.+?)(?:\s+(?:en|a\s+nivel|para)\b.*)?$",
         re.IGNORECASE,
     ),
-    # "cuánto sacó/obtuvo X" / "que porcentaje obtuvo X" — también plural "cuántos"
+    # "cuánto sacó/obtuvo X" / "que porcentaje obtuvo X" / "que resultado tuvo X"
     # acepta palabras intermedias: "cuanto porcentaje saco X", "cuantos puntos tuvo X"
     # acepta "habia/habria sacado" (pluscuamperfecto / condicional)
     # Nota: "total" eliminado del trailing para evitar capturar solo "en" en "cuanto saco en total el X"
     re.compile(
-        r"\b(?:cu[aá]ntos?\s+(?:habr?[ií]a\s+|hab[ií]a\s+)?(?:\w+\s+)?|qu[eé]\s+(?:porcentaje|puntaje|puntos?|lugar|posici[oó]n)\s+(?:de\s+votos?\s+)?)(?:sac[oó]|sacado|obtuvo|obtenido|logr[oó]|logrado|llev[oó]|llevado|anot[oó]|junt[oó]|juntado|consigui[oó]|conseguido|recibi[oó]|recibido|tiene|tuvo|lleg[oó]|llegado|alcanz[oó]|alcanzado)\s+(.+?)(?:\s+(?:en|a\s+nivel|en\s+total)\b.*)?$",
+        r"\b(?:cu[aá]ntos?\s+(?:habr?[ií]a\s+|hab[ií]a\s+)?(?:\w+\s+)?|qu[eé]\s+(?:porcentaje|puntaje|puntos?|lugar|posici[oó]n|resultado[s]?)\s+(?:de\s+votos?\s+)?)(?:sac[oó]|sacado|obtuvo|obtenido|logr[oó]|logrado|llev[oó]|llevado|anot[oó]|junt[oó]|juntado|consigui[oó]|conseguido|recibi[oó]|recibido|tiene|tuvo|lleg[oó]|llegado|alcanz[oó]|alcanzado)\s+(.+?)(?:\s+(?:en|a\s+nivel|en\s+total)\b.*)?$",
         re.IGNORECASE,
     ),
     # "votos de X" / "votos totales de X" / "número de votos de X"
@@ -271,6 +271,11 @@ _CANDIDATE_VOTE_PATTERNS = [
         r"\bcu[aá]ntos?\s+votos?\s+([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,40}?)(?:\s+(?:en|a\s+nivel)\b.*)?$",
         re.IGNORECASE,
     ),
+    # "sufragios obtenidos/logrados por NAME" / "sufragios de NAME" — variante con sufragios
+    re.compile(
+        r"\bsufragios?\s+(?:obtenidos?\s+(?:por|de)|logrados?\s+(?:por|de)|de|para|por)\s+([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,40}?)(?:\s+(?:en|a\s+nivel)\b.*)?$",
+        re.IGNORECASE,
+    ),
 ]
 
 # Aliases culturales/coloquiales para candidatos.
@@ -312,6 +317,7 @@ _NON_CANDIDATE_EXPRESSIONS: frozenset[str] = frozenset({
     "votos nulos", "votos blancos", "votos viciados",
     # Palabras electorales que NO son nombres de candidato
     "elecciones", "eleccion", "comicios", "sufragio",
+    "votacion", "votaciones", "sufragios",  # "resultado de la votacion en X" no es un candidato
     "congreso", "asamblea", "parlamento",
     "vuelta", "primera vuelta", "segunda vuelta",  # ej: "resultados de segunda vuelta en Piura"
     "primera", "segunda",  # evitar captura de "segunda vuelta resultados" como candidato "segunda"
@@ -332,7 +338,14 @@ _NON_CANDIDATE_EXPRESSIONS: frozenset[str] = frozenset({
     "como",  # verbo/pronombre — capturado por Pattern 9 como "como quedo" antes del nuevo patrón
     # Palabras que NUNCA son candidatos
     "pais", "exterior", "extranjero", "extranjera",
-    "nivel", "nacional",  # "a nivel nacional" capturado por Pattern 13 "candidato a nivel"
+    "nivel", "nacional", "nacionales",  # "a nivel nacional" / "resultados nacionales"
+    "electorales", "electoral",  # "resultados electorales"
+    # Roles genéricos de resultado electoral (no son nombres propios)
+    "ganador", "ganadora", "ganadores", "ganadoras", "el ganador", "la ganadora",
+    "vencedor", "vencedora", "vencedores", "el vencedor", "la vencedora",
+    "lider", "lideres", "el lider",
+    "presidente electo", "presidente electa", "el presidente electo",
+    "segundo lugar", "primer lugar", "tercer lugar",
     # Verbos existenciales / auxiliares que no son nombres de candidato
     "hubo", "habia", "habian", "habia habido", "hobo", "hay", "habia",
     "hubo", "tenia", "tuve", "existen", "existio",
@@ -353,6 +366,10 @@ _NON_CANDIDATE_EXPRESSIONS: frozenset[str] = frozenset({
     # Sustantivos de avance/proceso que no son candidatos
     "avance", "recuento", "conteo", "acumulado", "acumulados", "acumulada",
     "preliminar", "provisorio", "definitivo",
+    "escrutinio", "escrutados", "escrutadas", "escrutado", "escrutada",
+    "viciados", "viciado", "observados", "observado", "impugnados", "impugnado",
+    # Formas singulares de participio que no son candidatos
+    "votado", "mas votado", "mas votados",
     # Departamentos peruanos — nunca son nombres de candidato
     "lima", "arequipa", "callao", "cusco", "cuzco", "piura", "la libertad",
     "junin", "puno", "cajamarca", "lambayeque", "loreto", "ica", "ucayali",
@@ -1024,6 +1041,10 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "terremoto", "sismo", "tsunami", "catastrofe", "desastre",
             # PBI/PNB (sinónimos)
             "pbi", "pnb",
+            # Economía y política general
+            "ingreso", "ingresos", "sueldo", "renta", "corrupto", "corrupcion",
+            "democratico", "democracia",  # en contexto no-electoral
+            "presidentes",  # "cuantos presidentes ha tenido peru"
         })
         # "tiempo" alone is ambiguous; only block if paired with weather words
         # "cuanto vale/cuesta" = pricing query → non-electoral
@@ -1106,13 +1127,31 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                 started_ms=started_ms,
             )
 
+        # Preguntas históricas fuertes que contienen keywords electorales pero siguen siendo históricas
+        # (el bypass normal de _has_historical bloquea "eleccion"/"candidato" en la query)
+        if re.search(
+            r"\b(?:primera\s+elecci[oó]n\s+presidencial|primer\s+candidato\s+a\s+la\s+presidencia)\b",
+            _q_norm_guard,
+        ):
+            return ok_response(
+                {
+                    "intent": "unknown",
+                    "answer": (
+                        "Esa pregunta es de carácter histórico y está fuera del alcance de los resultados "
+                        "electorales peruanos 2026. Puedo responder sobre votos, candidatos y mesas de "
+                        "las elecciones actuales."
+                    ),
+                },
+                started_ms=started_ms,
+            )
+
         _has_historical = bool(
-            re.search(r"\b(?:antes\s+de\s+ser|antes\s+de\s+convertirse|biografia|historia\s+de|quien\s+fue\s+.+\s+antes|nació|murio|estudio|se\s+fund[oó]|se\s+cre[oó]|fue\s+fundado|fue\s+creado|cuando\s+(?:se\s+)?(?:fund|cre|naci|establec)|primer\s+(?:presidente|mandatario|ministro|alcalde|gobernador|rector|director|secretario|canciller)|pib\b|gdp\b|inflaci[oó]n\b|econom[ií]a\b|desempleo\b|pobreza\b|como\s+se\s+llama\b|cu[aá]l\s+es\s+el\s+nombre\s+de\b|cu[aá]l\s+es\s+la\s+capital\s+de\b|quien\s+(?:es|era|fue)\s+el\s+presidente\b|quien\s+(?:es|era|fue)\s+el\s+(?:primer\s+)?ministro\b)\b", _q_norm_guard)
+            re.search(r"\b(?:antes\s+de\s+ser|antes\s+de\s+convertirse|biografia|historia\s+de|quien\s+fue\s+.+\s+antes|nació|murio|estudio|se\s+fund[oó]|se\s+cre[oó]|fue\s+fundado|fue\s+creado|cuando\s+(?:se\s+)?(?:fund|cre|naci|establec)|primer\s+(?:presidente|mandatario|ministro|alcalde|gobernador|rector|director|secretario|canciller)|pib\b|gdp\b|inflaci[oó]n\b|econom[ií]a\b|desempleo\b|pobreza\b|como\s+se\s+llama\b|cu[aá]l\s+es\s+el\s+nombre\s+de\b|cu[aá]l\s+es\s+la\s+capital\s+de\b|quien\s+(?:es|era|fue)\s+el\s+presidente\b|quien\s+(?:es|era|fue)\s+el\s+(?:primer\s+)?ministro\b|primera\s+elecci[oó]n\s+presidencial|primer\s+candidato\s+a\s+la\s+presidencia|cuantos\s+presidentes\b)\b", _q_norm_guard)
             and not any(kw in _q_norm_guard for kw in ("voto", "votos", "eleccion", "resultado", "candidato", "mesa"))
         )
         # "como funciona / que es / define / explica" + electoral term → definitional (unknown)
         _has_definitional = bool(
-            re.search(r"\b(?:como\s+funciona|qu[eé]\s+es|define\s|definicion\s+de|explicar?\b|explicame\b|que\s+significa|como\s+se\s+hace|como\s+funciona(?:\s+el)?|propuesta(?:s)?\s+(?:de|del?|economica|politica|social)|plan\s+de\s+gobierno|programa\s+de\s+gobierno|ideologia\s+de|partido\s+(?:de|del?)|afiliacion\s+(?:de|politica))\b", _q_norm_guard)
+            re.search(r"\b(?:como\s+funciona|qu[eé]\s+es|define\s|definicion\s+de|explicar?\b|explicame\b|que\s+significa|como\s+se\s+hace|como\s+funciona(?:\s+el)?|propuesta(?:s)?\s+(?:de|del?|economica|politica|social)|plan\s+de\s+gobierno|programa\s+de\s+gobierno|ideologia\s+de|partido\s+(?:de|del?)|afiliacion\s+(?:de|politica)|que\s+dice\s+la\s+constituci[oó]n|constituci[oó]n\s+(?:sobre|acerca)|hay\s+en\s+el\s+mundo|en\s+el\s+mundo\b)\b", _q_norm_guard)
             and not any(kw in _q_norm_guard for kw in ("voto", "votos", "candidato", "mesa", "resultado"))
         )
         if _has_historical:
@@ -1975,6 +2014,8 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                         and not re.search(r"\bperu\b", _cfe_n.strip())  # "de Peru en X" tampoco
                         and len(_cfe_n.strip()) >= 3
                         and not (_cfe_w & _NON_CANDIDATE_EXPRESSIONS)
+                        # Guard: captura que empieza con verbo → no es candidato
+                        and not re.match(r"^(?:obtuvo|tuvo|sac[oó]|logr[oó]|consigui[oó]|recibi[oó]|junto|llev[oó]|gan[oó]|sum[oó]|lleg[oó]|alcanz[oó]|fue|quedo|salio|result[oó])\b", _cfe_n)
                     ):
                         _candidate_from_pattern_early = _cfe_cand
                         break
@@ -1986,7 +2027,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         if _candidate_from_pattern_early and re.search(r"\s+(?:y|e)\s+", _candidate_from_pattern_early, re.IGNORECASE):
             _parts = re.split(r"\s+(?:y|e)\s+", _candidate_from_pattern_early, flags=re.IGNORECASE)
             _multi_candidates = [p.strip() for p in _parts if p.strip()]
-        elif _candidate_from_pattern_early and re.search(r"\s+(?:versus|vs\.?|con|comparado\s+con|frente\s+a|contra)\s+", _candidate_from_pattern_early, re.IGNORECASE):
+        elif _candidate_from_pattern_early and re.search(r"\s+(?:versus|vs\.?|con|comparado\s+con|frente\s+a|contra|respecto\s+a|en\s+comparacion\s+con|a\s+diferencia\s+de)\s+", _candidate_from_pattern_early, re.IGNORECASE):
             _mc_m2 = _MULTI_CANDIDATE_PATTERN.search(q)
             if _mc_m2:
                 _mc_groups2 = [g.strip() for g in _mc_m2.groups() if g and g.strip()]
@@ -1994,8 +2035,8 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                     _multi_candidates = _mc_groups2[:2]
                     _candidate_from_pattern_early = None
             if not _multi_candidates:
-                # Fallback: split by versus/vs/comparado con/frente a/contra
-                _parts2 = re.split(r"\s+(?:versus|vs\.?|comparado\s+con|frente\s+a|contra)\s+", _candidate_from_pattern_early, flags=re.IGNORECASE)
+                # Fallback: split by versus/vs/comparado con/frente a/contra/respecto a
+                _parts2 = re.split(r"\s+(?:versus|vs\.?|comparado\s+con|frente\s+a|contra|respecto\s+a|en\s+comparacion\s+con)\s+", _candidate_from_pattern_early, flags=re.IGNORECASE)
                 if len(_parts2) >= 2:
                     _multi_candidates = [p.strip() for p in _parts2 if p.strip()]
                     _candidate_from_pattern_early = None
@@ -2273,7 +2314,9 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             # "elecciones 2026", "elecciones 2021", "elecciones del 2026", "elecciones del 2021",
             # "resultados 2026", "resultados 2021",
             # frases adicionales
-            "elecciones presidenciales", "presidenciales 2026", "presidenciales 2021",
+            "elecciones presidenciales", "eleccion presidencial",
+            "resumen de la eleccion", "resumen de las elecciones",
+            "presidenciales 2026", "presidenciales 2021",
             "participaron en las elecciones", "participacion en las elecciones",
             "ranking completo", "tabla de resultados", "tabla electoral",
             "tabla de candidatos", "lista completa", "todos los candidatos",
@@ -2338,18 +2381,34 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         # → dejar que la ruta geo tome el control
         _NATIONAL_GEO_OVERRIDE_PHRASES = {
             "mas votados", "los mas votados", "votados", "el mas votado",
+            # "candidatos con mas votos en X" → geo, no nacional
+            "candidatos con mas votos", "candidatos mas votados",
             "peruanos votaron", "peruanos que votaron", "quienes votaron", "cuantos votaron",
             "acudieron a votar", "fueron a votar", "participaron en la votacion",
             "quien encabeza", "quien va arriba", "quien lidera el conteo",
             "quien esta arriba", "quien salio primero", "quien quedo primero",
             "va ganando", "lidera", "va arriba",
             "hay resultados", "ya hay resultados", "resultados disponibles",
+            # "como quedo el conteo/resultado/votacion en X" → geo
+            "como quedo el conteo", "como quedo la votacion", "como quedo el resultado",
+            "como van los resultados",
+            # "participacion en X" → geo (participación en una región específica)
+            "participacion", "participacion electoral",
+            "participacion en las elecciones",
+            # votos especiales + geo → geo
+            "blancos y nulos", "nulos y blancos", "votos invalidos y blancos",
+            "votos blancos", "votos nulos", "votos viciados", "votos invalidos",
+            # avance/resultados + geo → geo
+            "avance del conteo", "avance del escrutinio",
+            "escrutinio", "escrutinios", "conteo final", "resultado del escrutinio",
+            "resultados finales", "resultados totales", "resultados definitivos",
+            "resultados parciales", "resultados oficiales", "resultados actualizados",
         }
         if _is_national and re.search(
             r"\b(?:en|de|para)\s+(?:(?:el|la|los|las)\s+)?(?!(?:el|la|los|las|un|una"
             r"|eleccion|elecciones|electoral|candidato|candidatos|voto|votos|resultado|resultados"
-            r"|total|totales|general|generales|primera|segunda|vuelta)\b)"
-            r"[A-Za-záéíóúñÁÉÍÓÚÑ]{4,}",
+            r"|total|totales|general|generales|primera|segunda|vuelta|mesas?|escrutinio)\b)"
+            r"[A-Za-záéíóúñÁÉÍÓÚÑ]{3,}",
             q_norm,
         ):
             # Si la única frase nacional activa es una de tipo genérico/ranking → ceder a geo
@@ -2376,7 +2435,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             r"(?!(?:el|la|los|las|un|una|unos|unas"
             r"|este|esta|esto|estos|estas|ese|esa|eso|esos|esas|aquel|aqui|ahi|alla"
             r"|todos?|todas?|cada|alguno?|ninguno?|cualquier|la\s+eleccion|candidatos?"
-            r"|votos?|voto|porcentaje|datos?|resultado|resultados|informacion|info"
+            r"|votos?|voto|sufragios?|votaci[oó]n|votaciones?|porcentaje|participaci[oó]n|datos?|resultado|resultados|informacion|info"
             r"|blanco|nulos?|viciados?|blancos|invalidos?|total|totales|general|generales"
             r"|norte|sur|este|oeste|centro|oriente|occidente|sierra|selva|costa"
             r"|primera|segunda|tercera|primera|primer|segundo|tercer|tercero|cuarta|quinto"
@@ -2438,8 +2497,8 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         # "quien salió en primer/segundo lugar" → ranking nacional sin geo
         if not _is_national and re.search(r"\b(?:quien|quienes?)\s+(?:sali[oó]|qued[oó]|result[oó])\s+en\s+(?:primer|segundo|tercer|cuarto|quinto)\b", q_norm) and not _GEO_IN_Q:
             _is_national = True
-        # "que paso en las elecciones" / "que ocurrio en las elecciones" → nacional
-        if not _is_national and re.search(r"\b(?:qu[eé]|como)\s+(?:pas[oó]|ocurri[oó]|result[oó]|fue)\s+en\s+(?:las?\s+)?elecci[oó]nes?\b", q_norm):
+        # "que paso en las elecciones" / "que ocurrio en las elecciones" → nacional (solo si no hay geo específico)
+        if not _is_national and re.search(r"\b(?:qu[eé]|como)\s+(?:pas[oó]|ocurri[oó]|result[oó]|fue)\s+en\s+(?:las?\s+)?elecci[oó]nes?\b", q_norm) and not _dept_name_in_q:
             _is_national = True
         # "quienes ganaron/superaron/consiguieron" sin geo → nacional; con "en PLACE" → geo_domestic
         if not _is_national and re.search(r"\bquienes?\s+(?:son\s+(?:los\s+)?)?(?:gan[ao]ron?|lider(?:es)?|superaron|consiguieron|obtuvieron|tuvieron)\b", q_norm):
@@ -2467,8 +2526,8 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         # "quienes quedaron en el top N" — _GEO_IN_Q fires on "en el top" so handle separately
         if not _is_national and re.search(r"\bquienes?\s+(?:quedaron?|terminaron|acabaron|lleg[ao]ron)\b", q_norm) and not _dept_name_in_q:
             _is_national = True
-        # "quien gano la presidencia" → nacional
-        if not _is_national and re.search(r"\bquien\s+(?:gan[oó]|obtuvo|logr[oó])\s+(?:la\s+)?(?:presidencia|eleccion|elecciones)\b", q_norm):
+        # "quien gano la presidencia/eleccion/votacion" → nacional
+        if not _is_national and re.search(r"\bquien\s+(?:gan[oó]|obtuvo|logr[oó])\s+(?:la\s+)?(?:presidencia|eleccion|elecciones|votacion|votaciones)\b", q_norm) and not _GEO_IN_Q and not _dept_name_in_q:
             _is_national = True
         # "cual es el ranking (actual/general)" → nacional
         if not _is_national and re.search(r"\bcual\s+(?:es|fue)\s+(?:el\s+)?ranking\b", q_norm) and not _GEO_IN_Q:
@@ -2491,11 +2550,41 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         # "como van los votos/candidatos" → nacional
         if not _is_national and re.search(r"\bcomo\s+van\s+(?:los\s+)?(?:votos?|candidatos?|elecciones?|resultados?|las\s+elecciones?)\b", q_norm) and not _GEO_IN_Q:
             _is_national = True
+        # "cuantos viciados/blancos/nulos/invalidos" → nacional
+        if not _is_national and re.search(r"\bcu[aá]ntos?\s+(?:votos?\s+)?(?:viciados?|blancos?|nulos?|invalidos?|impugnados?|observados?)\b", q_norm) and not _GEO_IN_Q and not _dept_name_in_q:
+            _is_national = True
+        # "cuantos electores/ciudadanos/personas/gente votaron" → nacional
+        if not _is_national and re.search(r"\bcu[aá]ntos?\s+(?:electores?|ciudadanos?|personas?|peruanos?|gente)\s+(?:votaron?|sufragaron?|ejercieron|participaron|acudieron|fueron\s+a\s+votar|asistieron)\b", q_norm) and not _GEO_IN_Q and not _dept_name_in_q:
+            _is_national = True
+        # "cuantos votos saco/obtuvo el ganador/lider/presidente" → nacional
+        if not _is_national and re.search(r"\b(?:el\s+)?(?:ganador|lider|vencedor|presidente\s+electo)\b", q_norm) and re.search(r"\b(?:votos?|sac[oó]|obtuvo|logr[oó]|consigui[oó]|tuvo|alcanz[oó])\b", q_norm) and not _GEO_IN_Q and not _dept_name_in_q:
+            _is_national = True
         # "cuantos votos validos/en total hubo" → nacional
         if not _is_national and re.search(r"\bcu[aá]ntos?\s+votos?\s+(?:totales?|en\s+total|emitidos?|computados?|v[aá]lidos?|hubo|hay|fueron)\b", q_norm) and not _GEO_IN_Q and not _dept_name_in_q:
             _is_national = True
+        # "total de mesas escrutadas/procesadas" → nacional (sin chequeo de geo: "de mesas" activa _GEO_IN_Q)
+        if not _is_national and re.search(r"\b(?:total\s+de\s+mesas?|mesas?\s+escrutadas?|mesas?\s+procesadas?|porcentaje\s+de\s+mesas?)\b", q_norm):
+            _is_national = True
+        # "porcentaje de escrutinio/mesas contadas/conteo" → nacional (sin chequeo geo: mesas está en exclusión _GEO_IN_Q)
+        if not _is_national and re.search(r"\bporcentaje\s+de\s+(?:escrutinio|mesas?|conteo)\b", q_norm):
+            _is_national = True
+        # "porcentaje de participacion/votos validos" → nacional solo si no hay geo específico
+        if not _is_national and re.search(r"\bporcentaje\s+de\s+(?:participaci[oó]n|votos?\s+(?:v[aá]lidos?|blancos?|nulos?))\b", q_norm) and not _GEO_IN_Q and not _dept_name_in_q:
+            _is_national = True
+        # "tercer/segundo/cuarto candidato mas votado" → nacional
+        if not _is_national and re.search(r"\b(?:tercer|segundo|primer|cuarto|quinto)\s+candidato\s+(?:mas\s+)?(?:votado|en\s+votos)\b", q_norm):
+            _is_national = True
+        # "el mas votado" / "segundo/tercer mas votado" / "quien resulto mas votado" → nacional (si no hay geo)
+        if not _is_national and re.search(r"\b(?:el\s+mas\s+votado|(?:segundo|tercer|cuarto|quinto|primer)\s+mas\s+votado|quien\s+resulto\s+(?:mas\s+)?votado)\b", q_norm) and not _GEO_IN_Q and not _dept_name_in_q:
+            _is_national = True
         # "top N en Peru" / "resultados en Peru" (país entero sin dept específico) → nacional
         if not _is_national and re.search(r"\b(?:en|del?)\s+peru\b", q_norm) and not any(re.search(r"\b" + re.escape(d) + r"\b", q_norm) for d in _PERU_DEPTS):
+            _is_national = True
+        # "resultados de la votacion/votaciones" sin geo → nacional
+        if not _is_national and re.search(r"\bresultados?\s+de\s+(?:la[s]?\s+)?votaci[oó]n(?:es)?\b", q_norm) and not _dept_name_in_q:
+            _is_national = True
+        # "sufragios validos/totales/emitidos" sin geo → nacional
+        if not _is_national and re.search(r"\bsufragios?\s+(?:v[aá]lidos?|totales?|emitidos?|v[aá]lidos?|blancos?|nulos?|viciados?|invalidos?|computados?)\b", q_norm) and not _GEO_IN_Q and not _dept_name_in_q:
             _is_national = True
         # Override: si hay un país extranjero conocido en la consulta (sin preposición) → no es nacional
         _FOREIGN_COUNTRY_NAMES = frozenset({
@@ -2831,6 +2920,8 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                         and not re.fullmatch(r"\d+", _late_n.strip())  # no son candidatos números puros
                         and len(_late_n.strip()) >= 3
                         and not (_late_w & _NON_CANDIDATE_EXPRESSIONS)
+                        # Guard: captura que empieza con verbo → no es candidato
+                        and not re.match(r"^(?:obtuvo|tuvo|sac[oó]|logr[oó]|consigui[oó]|recibi[oó]|junto|llev[oó]|gan[oó]|sum[oó]|lleg[oó]|alcanz[oó]|fue|quedo|salio|result[oó])\b", _late_n)
                     ):
                         _candidate_from_pattern = _late_cand
                         break
