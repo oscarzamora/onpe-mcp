@@ -64,8 +64,9 @@ _foreign_catalog_synced: bool = False
 # Compilados una vez a nivel de módulo para evitar overhead por llamada.
 _CANDIDATE_VOTE_PATTERNS = [
     # "cuántos votos sacó/tuvo/obtuvo/logró/consiguió/recibió/juntó X"
+    # incluye plural "sacaron/tuvieron/obtuvieron" para multi-candidato
     re.compile(
-        r"\bcu[aá]ntos?\s+votos?\s+(?:tuvo|sac[oó]|tiene|obtuvo|gan[oó]|logr[oó]|consigui[oó]|recibi[oó]|junt[oó])\s+(.+?)(?:\s+(?:en|a\s+nivel|para|total|en\s+total)\b.*)?$",
+        r"\bcu[aá]ntos?\s+votos?\s+(?:tuvo|tuvieron|sac[oó]|sacaron|tiene|tienen|obtuvo|obtuvieron|gan[oó]|ganaron|logr[oó]|lograron|consigui[oó]|consiguieron|recibi[oó]|recibieron|junt[oó]|juntaron)\s+(.+?)(?:\s+(?:en|a\s+nivel|para|total|en\s+total)\b.*)?$",
         re.IGNORECASE,
     ),
     # "cuánto sacó/obtuvo/logró/llevó/anotó/juntó X" (sin "votos")
@@ -112,6 +113,11 @@ _CANDIDATE_VOTE_PATTERNS = [
         r"^(.+?)\s+cu[aá]ntos?\s+votos?(?:\s+(?:sac[oó]|tuvo|tiene|obtuvo))?",
         re.IGNORECASE,
     ),
+    # Bare "NAME en GEO" / "NAME en GEO?" — fallback for queries without verb
+    re.compile(
+        r"^([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{2,40}?)\s+en\s+\w",
+        re.IGNORECASE,
+    ),
 ]
 
 # Aliases culturales/coloquiales para candidatos.
@@ -131,6 +137,27 @@ _CANDIDATE_CULTURAL_ALIASES: dict[str, str] = {
     "candidato del sombrero":   "sanchez",
     "candidato sombrero":       "sanchez",
 }
+
+# Expresiones que NO son nombres de candidato aunque coincidan con patrones de voto.
+# Ej: "resultados de peruanos en Argentina" → "peruanos" no es candidato.
+_NON_CANDIDATE_EXPRESSIONS: frozenset[str] = frozenset({
+    "peruanos", "peruanas", "ciudadanos", "ciudadanas", "electores",
+    "votantes", "personas", "residentes", "extranjeros", "candidatos",
+    "todos", "nadie", "alguien",
+    # Stop words que aparecen antes de "en" en queries geo puras
+    "resultados", "resultado", "top", "primero", "primer", "segundo",
+    "tercero", "cuarto", "quinto", "primeros", "votos", "voto",
+    "informacion", "info", "dato", "datos",
+})
+
+# Patrón para detectar consultas multi-candidato: "X y Y" o "X e Y"
+_MULTI_CANDIDATE_PATTERN = re.compile(
+    r"\bvotos?\s+(?:de\s+)?(.+?)\s+(?:y|e)\s+(.+?)(?:\s+(?:en|a\s+nivel|total)\b.*)?$"
+    r"|\b(.+?)\s+y\s+(.+?)\s+cu[aá]ntos?\s+votos?"
+    r"|\bcomparar?\s+(?:votos?\s+(?:de\s+)?)?(.+?)\s+(?:y|con)\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
+    r"|\b([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,40}?)\s+y\s+([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,40}?)\s+en\b",
+    re.IGNORECASE,
+)
 
 
 def _try_bootstrap_snapshot_on_startup() -> None:
@@ -1291,6 +1318,90 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                 if _vm:
                     _candidate_from_pattern_early = _vm.group(1).strip()
                     break
+
+        # Filtrar expresiones que no son nombres de candidato
+        if _candidate_from_pattern_early:
+            _cfe_norm = _norm(_candidate_from_pattern_early)
+            if (
+                _cfe_norm in _NON_CANDIDATE_EXPRESSIONS
+                or _cfe_norm.startswith("en ")
+                or _cfe_norm.startswith("a nivel")
+                or len(_cfe_norm.strip()) < 3
+            ):
+                _candidate_from_pattern_early = None
+
+        # ── Multi-candidato: "Aliaga y Fujimori cuántos votos" ───────────────
+        # Detectar cuando la expresión candidato contiene " y " separando dos candidatos.
+        _multi_candidates: list[str] = []
+        if _candidate_from_pattern_early and re.search(r"\s+(?:y|e)\s+", _candidate_from_pattern_early, re.IGNORECASE):
+            _parts = re.split(r"\s+(?:y|e)\s+", _candidate_from_pattern_early, flags=re.IGNORECASE)
+            _multi_candidates = [p.strip() for p in _parts if p.strip()]
+        elif not _candidate_from_pattern_early:
+            _mc_m = _MULTI_CANDIDATE_PATTERN.search(q)
+            if _mc_m:
+                _mc_groups = [g.strip() for g in _mc_m.groups() if g and g.strip()]
+                if len(_mc_groups) >= 2:
+                    _multi_candidates = _mc_groups[:2]
+        # Strip trailing "en PLACE" from candidate names (e.g. "Keiko en Arequipa" → "Keiko")
+        _multi_candidates = [
+            re.sub(r"\s+en\s+\S.*$", "", c, flags=re.IGNORECASE).strip()
+            for c in _multi_candidates
+        ]
+
+        if _multi_candidates:
+            _cand_map_mc = store.load_candidate_map(settings.source_dir / "candidato.txt")
+            # Detectar scope geográfico para multi-candidato
+            _mc_scope_ubigeos: set[str] | None = None
+            _mc_scope_label = ""
+            _mc_geo_m = re.search(r"\ben\s+([A-Za-záéíóúÁÉÍÓÚñÑ][A-Za-z\sáéíóúÁÉÍÓÚñÑ]+?)(?:\s+(?:cuantos?|votos?|dame|top|resultados?|quien|que|como)\b|$)", q, re.IGNORECASE)
+            if _mc_geo_m:
+                _mc_potential = _mc_geo_m.group(1).strip()
+                if all(_norm(_mc_potential) not in _norm(c) for c in _multi_candidates):
+                    _mc_geo_res = store.find_domestic_ubigeos_by_geo_name(_mc_potential)
+                    if _mc_geo_res:
+                        _, _mc_ubigeo_list = _mc_geo_res
+                        _mc_scope_ubigeos = set(_mc_ubigeo_list) if _mc_ubigeo_list else None
+                        _mc_scope_label = f" en {_mc_potential.title()}"
+            _aggs_mc = store.aggregate_votes_by_party(ubigeos=_mc_scope_ubigeos)
+            _mc_results = []
+            for _mc_expr in _multi_candidates:
+                _mc_expr_norm = _norm(_mc_expr)
+                _mc_match = next(
+                    (it for it in _aggs_mc if _mc_expr_norm in _norm(_cand_map_mc.get(str(it["partido_id"]), ""))
+                     or _mc_expr_norm in _norm(str(it["nombre_partido"]))),
+                    None,
+                )
+                if _mc_match:
+                    _mc_rank = next((i for i, it in enumerate(_aggs_mc, 1) if str(it["partido_id"]) == str(_mc_match["partido_id"])), None)
+                    _mc_cname = _cand_map_mc.get(str(_mc_match["partido_id"]), _mc_match["nombre_partido"])
+                    _mc_results.append({
+                        "candidato": _mc_cname,
+                        "partido_id": str(_mc_match["partido_id"]),
+                        "total_votos": int(_mc_match["total_votos"]),
+                        "rank": _mc_rank,
+                        "found": True,
+                    })
+                else:
+                    _mc_results.append({"candidato": _mc_expr, "found": False, "total_votos": 0})
+            _mc_ans_parts = []
+            for _mcr in _mc_results:
+                if _mcr["found"]:
+                    _mc_ans_parts.append(
+                        f"**{_mcr['candidato']}**: {int(_mcr['total_votos']):,} votos (posición #{_mcr['rank']})"
+                    )
+                else:
+                    _mc_ans_parts.append(f"**{_mcr['candidato']}**: no encontrado en 2026")
+            _mc_scope_str = _mc_scope_label or " a nivel nacional"
+            _mc_answer = f"Comparación de votos{_mc_scope_str}:\n" + "\n".join(_mc_ans_parts)
+            data = {
+                "intent": "multi_candidate",
+                "answer": _mc_answer,
+                "result": {"candidates": _mc_results, "scope": _mc_scope_label or "nacional"},
+                "source": "sqlite",
+                "data_tier": "tier_1_local_cache",
+            }
+            store.append_raw_event("onpe_chat_multi_candidate", {"query": q})
+            return ok_response(data, started_ms=started_ms)
 
         if _candidate_from_pattern_early or "candidato" in q_norm:
             _cand_map_early = store.load_candidate_map(settings.source_dir / "candidato.txt")
