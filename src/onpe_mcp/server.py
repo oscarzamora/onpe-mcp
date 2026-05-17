@@ -1294,7 +1294,26 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
 
         if _candidate_from_pattern_early or "candidato" in q_norm:
             _cand_map_early = store.load_candidate_map(settings.source_dir / "candidato.txt")
-            _aggs_early = store.aggregate_votes_by_party()
+
+            # Detectar scope geográfico en la query: "en Puno", "en Lima", "en Loreto"
+            # Se extrae la parte después de "en" que no forma parte del nombre del candidato.
+            _candidate_geo_scope: str | None = None
+            _scope_ubigeos: set[str] | None = None
+            _scope_label = ""
+            if _candidate_from_pattern_early:
+                _geo_scope_m = re.search(r"\ben\s+(.+?)$", q, re.IGNORECASE)
+                if _geo_scope_m:
+                    _potential_scope = _geo_scope_m.group(1).strip()
+                    # Solo usar si el scope no forma parte del nombre del candidato
+                    if _norm(_potential_scope) not in _norm(_candidate_from_pattern_early):
+                        _geo_res_scope = store.find_domestic_ubigeos_by_geo_name(_potential_scope)
+                        if _geo_res_scope is not None:
+                            _candidate_geo_scope = _potential_scope
+                            _, _scope_ubigeo_list = _geo_res_scope
+                            _scope_ubigeos = set(_scope_ubigeo_list) if _scope_ubigeo_list else None
+                            _scope_label = f" en {_candidate_geo_scope.title()}"
+
+            _aggs_early = store.aggregate_votes_by_party(ubigeos=_scope_ubigeos)
             _expr_early = _norm(_candidate_from_pattern_early or q)
             _match_early = None
             for _item in _aggs_early:
@@ -1314,12 +1333,17 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                 _ans_early = (
                     f"Candidato {_match_early.get('candidato') or 'sin mapeo'} "
                     f"(partido {_match_early['partido_id']}) tiene {int(_match_early['total_votos']):,} votos "
-                    f"y posición {_rank_early} en el consolidado actual."
+                    f"y posición {_rank_early}{_scope_label} en el consolidado actual."
                 )
                 data = {
                     "intent": "candidate",
                     "answer": _ans_early,
-                    "result": {**_match_early, "rank": _rank_early, "total_partidos": len(_aggs_early)},
+                    "result": {
+                        **_match_early,
+                        "rank": _rank_early,
+                        "total_partidos": len(_aggs_early),
+                        "scope": _candidate_geo_scope,
+                    },
                     "source": "sqlite",
                     "data_tier": "tier_1_local_cache",
                 }
