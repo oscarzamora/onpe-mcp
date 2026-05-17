@@ -350,6 +350,9 @@ _NON_CANDIDATE_EXPRESSIONS: frozenset[str] = frozenset({
     # Sustantivos de proceso/estadística que no son candidatos
     "participacion", "abstenciones", "abstencion", "concurrencia", "asistencia",
     "ranking", "clasificacion", "posicion", "posiciones",
+    # Sustantivos de avance/proceso que no son candidatos
+    "avance", "recuento", "conteo", "acumulado", "acumulados", "acumulada",
+    "preliminar", "provisorio", "definitivo",
     # Departamentos peruanos — nunca son nombres de candidato
     "lima", "arequipa", "callao", "cusco", "cuzco", "piura", "la libertad",
     "junin", "puno", "cajamarca", "lambayeque", "loreto", "ica", "ucayali",
@@ -1109,7 +1112,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         )
         # "como funciona / que es / define / explica" + electoral term → definitional (unknown)
         _has_definitional = bool(
-            re.search(r"\b(?:como\s+funciona|qu[eé]\s+es|define\s|definicion\s+de|explicar?\b|explicame\b|que\s+significa|como\s+se\s+hace|como\s+funciona(?:\s+el)?)\b", _q_norm_guard)
+            re.search(r"\b(?:como\s+funciona|qu[eé]\s+es|define\s|definicion\s+de|explicar?\b|explicame\b|que\s+significa|como\s+se\s+hace|como\s+funciona(?:\s+el)?|propuesta(?:s)?\s+(?:de|del?|economica|politica|social)|plan\s+de\s+gobierno|programa\s+de\s+gobierno|ideologia\s+de|partido\s+(?:de|del?)|afiliacion\s+(?:de|politica))\b", _q_norm_guard)
             and not any(kw in _q_norm_guard for kw in ("voto", "votos", "candidato", "mesa", "resultado"))
         )
         if _has_historical:
@@ -2461,6 +2464,18 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             _is_national = True
         # "cuantas mesas se han contado/procesado" → nacional
         if not _is_national and re.search(r"\bcu[aá]ntas?\s+mesas?\s+(?:se\s+han?\s+|han?\s+sido\s+)?(?:contado|procesado|contabilizado|acumulado|reportado)\b", q_norm) and not _GEO_IN_Q:
+            _is_national = True
+        # "quien encabezo/lidera/va adelante la votacion" → nacional
+        if not _is_national and re.search(r"\bquien\s+(?:encabez[oó]|encabeza|encabezaba|lidera|lideraba|iba\s+adelante|va\s+adelante|estaba\s+primero)\b", q_norm) and not _GEO_IN_Q:
+            _is_national = True
+        # "como va el recuento/conteo/avance" → nacional
+        if not _is_national and re.search(r"\bcomo\s+va\s+(?:el\s+)?(?:recuento|conteo|avance|escrutinio|proceso)\b", q_norm) and not _GEO_IN_Q:
+            _is_national = True
+        # "avance de votos/resultados" / "votos acumulados" / "resultados preliminares" → nacional
+        if not _is_national and re.search(r"\b(?:avance\s+(?:de\s+)?(?:votos?|resultados?)|votos?\s+acumulados?|resultados?\s+(?:preliminares?|acumulados?|en\s+tiempo\s+real)|recuento\s+(?:de\s+)?votos?)\b", q_norm) and not _GEO_IN_Q:
+            _is_national = True
+        # "estado (actual/del) conteo/recuento/elecciones" → nacional
+        if not _is_national and re.search(r"\bestado\s+(?:actual\s+)?(?:del?\s+)?(?:conteo|recuento|escrutinio|elecciones?|proceso\s+electoral)\b", q_norm):
             _is_national = True
         # "como van los votos/candidatos" → nacional
         if not _is_national and re.search(r"\bcomo\s+van\s+(?:los\s+)?(?:votos?|candidatos?|elecciones?|resultados?|las\s+elecciones?)\b", q_norm) and not _GEO_IN_Q:
