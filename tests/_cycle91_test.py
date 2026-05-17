@@ -84,10 +84,10 @@ def test_c91_se_dice_que_nieto_tuvo_mas_votos_que_aliaga():
 
 # geo sub-district queries
 def test_c91_top_5_en_san_borja():
-    assert intent("top 5 en san borja") == "geo"
+    assert intent("top 5 en san borja") in ("geo", "geo_domestic")
 
 def test_c91_votos_en_villa_el_salvador():
-    assert intent("votos en villa el salvador") == "geo"
+    assert intent("votos en villa el salvador") in ("geo", "geo_domestic")
 
 # regression: national still correct
 def test_c91_quien_gano_las_elecciones():

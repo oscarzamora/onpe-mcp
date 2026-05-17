@@ -80,8 +80,38 @@ _CITY_ALIASES: dict[str, str] = {
     # Cajamarca
     "cajamarca": "cajamarca",
     "jaen": "jaen",
+    # Lima — distritos urbanos frecuentes
+    "miraflores": "miraflores",
+    "san isidro": "san isidro",
+    "lince": "lince",
+    "barranco": "barranco",
+    "surco": "santiago de surco",
+    "surquillo": "surquillo",
+    "la molina": "la molina",
+    "san borja": "san borja",
+    "pueblo libre": "pueblo libre",
+    "jesus maria": "jesus maria",
+    "magdalena": "magdalena del mar",
+    "san miguel": "san miguel",
+    "breña": "breña",
+    "rimac": "rimac",
+    "los olivos": "los olivos",
+    "san martin de porres": "san martin de porres",
+    "independencia": "independencia",
+    "comas": "comas",
+    "carabayllo": "carabayllo",
+    "ate": "ate",
+    "santa anita": "santa anita",
+    "el agustino": "el agustino",
+    "san juan de lurigancho": "san juan de lurigancho",
+    "san juan de miraflores": "san juan de miraflores",
+    "villa maria del triunfo": "villa maria del triunfo",
+    "villa el salvador": "villa el salvador",
+    "lurin": "lurin",
+    "chorrillos": "chorrillos",
+    "puente piedra": "puente piedra",
+    "ventanilla": "ventanilla",
 }
-
 
 class DataStore:
     def __init__(self, data_dir: Path) -> None:

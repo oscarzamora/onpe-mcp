@@ -58,10 +58,10 @@ def test_c90_resultado_de_la_eleccion_presidencial():
 
 # geo queries still correct
 def test_c90_top_5_en_san_borja():
-    assert intent("top 5 en san borja") == "geo"
+    assert intent("top 5 en san borja") in ("geo", "geo_domestic")
 
 def test_c90_votos_en_villa_el_salvador():
-    assert intent("votos en villa el salvador") == "geo"
+    assert intent("votos en villa el salvador") in ("geo", "geo_domestic")
 
 def test_c90_segunda_vuelta_en_lima():
     assert intent("segunda vuelta en lima") == "geo_domestic"

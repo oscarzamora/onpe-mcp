@@ -29,6 +29,7 @@ from .utils import (
     ok_response,
     validate_mesa_code,
 )
+from onpe_mcp.storage import _CITY_ALIASES as _STATIC_CITY_ALIASES
 
 
 settings = Settings.from_env()
@@ -568,7 +569,8 @@ def _resolve_foreign_geo_query(query: str) -> tuple[str | None, str, list[dict[s
 
 
 def _resolve_domestic_geo_query(q: str) -> tuple[str, set[str]] | None:
-    """Resuelve una geo doméstica peruana. Primero tabla ubigeo_reniec, luego prefijos por departamento."""
+    """Resuelve una geo doméstica peruana. Primero tabla ubigeo_reniec, luego prefijos por departamento,
+    luego fallback estático contra _CITY_ALIASES (sin DB — funciona aunque la DB esté vacía)."""
     reniec_result = store.find_domestic_ubigeos_by_geo_name(q)
     if reniec_result is not None:
         geo_name, ubigeos = reniec_result
@@ -578,6 +580,12 @@ def _resolve_domestic_geo_query(q: str) -> tuple[str, set[str]] | None:
         dept_name, dept_prefix = dept_result
         ubigeos = set(store.find_ubigeos_by_prefix(dept_prefix))
         return dept_name, ubigeos
+    # Fallback estático: no requiere DB. Escanea la query buscando alias conocidos.
+    # Garantiza que NLU detecte intent=geo_domestic aunque la DB esté vacía (ej. CI).
+    q_norm = _norm(q)
+    for alias_key in _STATIC_CITY_ALIASES:
+        if re.search(r"\b" + re.escape(alias_key) + r"\b", q_norm):
+            return alias_key, set()
     return None
 
 
