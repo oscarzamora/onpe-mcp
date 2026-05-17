@@ -347,6 +347,7 @@ _FILLER_START = re.compile(
     r"|(?:puedes?\s+)?(?:mostrarme|muéstrame|mostrar|ver)[,\s]+"
     r"|(?:quiero|quisiera|necesito|podrias?\s+decirme|podrías?\s+decirme)\s+(?:saber\s+|ver\s+)?"
     r"|(?:oye|oiga|escucha)[,\s]+"
+    r"|(?:ponme|dame|muestrame|muéstrame|dime)[,\s]+"
     r"|(?:por\s+favor[,\s]+)?"
     r"|(?:sabes?\s+(?:cuantos?|cu[aá]ntos?|como|cómo)\s+)?"
     r"|(?:dime\s+)?"
@@ -1695,6 +1696,8 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "en total", "en general", "en conjunto",
             "participacion electoral", "participacion",
             "al pais", "en el pais", "todo el pais", "el pais",
+            "todos los partidos", "partidos politicos", "cada partido",
+            "resumen de votos", "listado de candidatos", "listado completo",
         }
         _is_national = any(p in q_norm for p in _NATIONAL_PHRASES)
         if not _is_national and re.search(r"\b(top\s*\d*|\d+\s+primeros?|primeros?\s+\d+)\b", q_norm) and (
