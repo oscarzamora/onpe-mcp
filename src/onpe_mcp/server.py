@@ -1002,6 +1002,8 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             # Cargos públicos no-candidatos
             "presidente del peru", "presidente de la republica",
             "primer ministro", "primer presidente",
+            # Historia no-electoral
+            "guerra",
         })
         # "tiempo" alone is ambiguous; only block if paired with weather words
         # "cuanto vale/cuesta" = pricing query → non-electoral
@@ -2393,6 +2395,14 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         # bare standalone electoral keywords → nacional
         if not _is_national and q_norm.strip() in {"resultados", "resultado", "quien gano", "quien gan"}:
             _is_national = True
+        # "quienes participaron" / "quien quedo N" / "cual fue el resultado" → nacional
+        if not _is_national and not _GEO_IN_Q and not _dept_name_in_q:
+            if re.search(r"\b(?:participaron|concurrieron|compitieron|se\s+presentaron)\b", q_norm):
+                _is_national = True
+            elif re.search(r"\bquien\s+qued[oó]\s+(?:en\s+)?(?:segundo|tercero|cuarto|quinto|primer|primero|último|ultimo)\b", q_norm):
+                _is_national = True
+            elif re.search(r"\bcual\s+(?:fue|es)\s+(?:el\s+)?resultado\b", q_norm):
+                _is_national = True
         # "top N en Peru" / "resultados en Peru" (país entero sin dept específico) → nacional
         if not _is_national and re.search(r"\b(?:en|del?)\s+peru\b", q_norm) and not any(re.search(r"\b" + re.escape(d) + r"\b", q_norm) for d in _PERU_DEPTS):
             _is_national = True
