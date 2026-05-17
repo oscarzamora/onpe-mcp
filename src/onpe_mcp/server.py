@@ -69,7 +69,7 @@ _CANDIDATE_VOTE_PATTERNS = [
     # acepta typos b/v frecuentes en español peruano: tubo/obtubo/obtubieron
     # acepta "había/habría obtenido" (pluscuamperfecto / condicional compuesto)
     re.compile(
-        r"\bcu[aá]ntos?\s+votos?\s+(?:en\s+total\s+|fue\s+que\s+|se\s+|habr?[ií]a\s+|hab[ií]a\s+)?(?:tuvo|tuvieron|tubo|tubieron|sac[oó]|sacaron|tiene|tienen|obtuvo|obtuvieron|obtubo|obtubieron|gan[oó]|ganaron|logr[oó]|lograron|consigui[oó]|consiguieron|recibi[oó]|recibieron|junt[oó]|juntaron|lleva|llevan|lleba|lleban|llev[oó]|llevaron|acumula|acumulan|acumul[oó]|sum[oó]|sumaron|lleg[oó]|llegaron|alcanz[oó]|alcanzaron|adjudic[oó]|capt[oó]|captaron|hizo|hicieron|reuni[oó]|reunieron|obtenido|logrado|conseguido|sacado|ganado|recibido|juntado|alcanzado|captado)\s+(.+?)(?:\s+(?:en|a\s+nivel|para)\b.*)?$",
+        r"\bcu[aá]ntos?\s+votos?\s+(?:en\s+total\s+|fue\s+que\s+|se\s+|habr?[ií]a\s+|hab[ií]a\s+)?(?:tuvo|tuvieron|tubo|tubieron|sac[oó]|sacaron|tiene|tienen|obtuvo|obtuvieron|obtubo|obtubieron|gan[oó]|ganaron|logr[oó]|lograron|consigui[oó]|consiguieron|recibi[oó]|recibieron|junt[oó]|juntaron|lleva|llevan|lleba|lleban|llev[oó]|llevaron|acumula|acumulan|acumul[oó]|sum[oó]|sumaron|lleg[oó]|llegaron|alcanz[oó]|alcanzaron|adjudic[oó]|capt[oó]|captaron|hizo|hicieron|reuni[oó]|reunieron|jal[oó]|jalaron|obtenido|logrado|conseguido|sacado|ganado|recibido|juntado|alcanzado|captado)\s+(.+?)(?:\s+(?:en|a\s+nivel|para)\b.*)?$",
         re.IGNORECASE,
     ),
     # "cuánto sacó/obtuvo X" / "que porcentaje obtuvo X" — también plural "cuántos"
@@ -155,9 +155,19 @@ _CANDIDATE_VOTE_PATTERNS = [
         re.IGNORECASE,
     ),
     # "X cuántos votos" (order reversed) — also "X cuántos lleva/tiene/acumula"
-    # Trailing \s* makes "votos" optional at end-of-string without trailing space
+    # Trailing allows "en GEO" at end (e.g., "Fujimori cuanto llevo en Lima")
     re.compile(
-        r"^(.+?)\s+cu[aá]ntos?\s*(?:votos?\s*)?(?:sac[oó]|tuvo|tiene|obtuvo|lleva|acumula|sum[oó]|consigui[oó])?$",
+        r"^(.+?)\s+cu[aá]ntos?\s*(?:votos?\s*)?(?:sac[oó]|tuvo|tiene|obtuvo|lleva|llev[oó]|lleg[oó]|acumula|sum[oó]|consigui[oó]|jal[oó])?(?:\s+en\s+\S.*)?$",
+        re.IGNORECASE,
+    ),
+    # "que salio/resulto/quedo NAME en las elecciones" — "que salio Aliaga"
+    re.compile(
+        r"\bqu[eé]\s+(?:sali[oó]|result[oó]|qued[oó]|le\s+fue|puntaje\s+tuvo)\s+([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,35}?)(?:\s+en\b.*)?$",
+        re.IGNORECASE,
+    ),
+    # "NAME que tan alto/bien llego/quedo" — coloquial
+    re.compile(
+        r"^([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,35}?)\s+(?:qu[eé]\s+tan\s+\w+|c[oó]mo)\s+(?:lleg[oó]|sali[oó]|qued[oó]|termin[oó])",
         re.IGNORECASE,
     ),
     # Bare "NAME en GEO" / "NAME en GEO?" — fallback for queries sin verbo
@@ -302,7 +312,7 @@ _MULTI_CANDIDATE_PATTERN = re.compile(
     r"|\b(.+?)\s+cu[aá]ntos?\s+votos?\s+(?:y|e)\s+(.+?)\s+cu[aá]ntos?\s+votos?"
     r"|\b(?:si\s+)?(.+?)\s+(?:le\s+)?gan[oó]\s+(?:a|contra)\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\btanto\s+(.+?)\s+como\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
-    r"|\b(.+?)\s+(?:tuvo|sac[oó]|obtuvo)\s+m[aá]s\s+votos?\s+que\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
+    r"|\b(.+?)\s+(?:tuvo|sac[oó]|obtuvo|tiene)\s+m[aá]s\s+votos?\s+que\s+(.+?)(?:\s+(?:en|a\s+nivel|verdad|no\s*\?|cierto)\b.*)?$"
     r"|\bcu[aá]ntos?\s+m[aá]s\s+votos?\s+(?:tuvo|sac[oó]|obtuvo|tiene|lleva)\s+(.+?)\s+que\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\bcu[aá]nto\s+m[aá]s\s+(?:sac[oó]|tuvo|obtuvo|lleva|tiene)\s+(.+?)\s+que\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\bcompar[ae]\s+(.+?)\s+con\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
@@ -919,11 +929,12 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "pelicula", "peliculas", "oscar", "cine", "cinema", "actor", "actriz",
             "nominacion", "nominaciones", "serie", "television", "musica", "cancion",
             "album", "artista", "concierto", "espectaculo", "teatro", "obra",
+            "vuelo", "vuelos", "aerolinea", "aerolineas", "pasaje", "pasajes",
         })
         # "tiempo" alone is ambiguous; only block if paired with weather words
-        # "cuanto vale" = pricing query → non-electoral
+        # "cuanto vale/cuesta" = pricing query → non-electoral
         _has_price_query = bool(
-            re.search(r"\bcu[aá]nto\s+vale\b", _q_norm_guard)
+            re.search(r"\bcu[aá]nto\s+(?:vale|cuesta|cuestan?|salen?|cobran?)\b", _q_norm_guard)
             and not any(kw in _q_norm_guard for kw in ("voto", "votos", "eleccion", "candidato", "mesa"))
         )
         # "tiempo" alone is ambiguous (also = "time"); only block if paired with weather words
@@ -1510,7 +1521,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         # También detectar rango numérico explícito "X a Y" (ej: "900100 a 900200") o "entre X y Y" o "del X al Y"
         _numeric_range_m = (
             re.search(r"\b(\d{4,6})\s+a\s+(?:la\s+|el\s+)?\d{4,6}\b", q_norm)
-            or re.search(r"\bentre\s+(\d{4,6})\s+y\s+\d{4,6}\b", q_norm)
+            or re.search(r"\bentre\s+(?:la\s+)?(?:mes[a]+s?\s+)?(\d{4,6})\s+y\s+\d{4,6}\b", q_norm)
             or re.search(r"\bdel?\s+(\d{4,6})\s+al?\s+\d{4,6}\b", q_norm)
             or re.search(r"\bdesde\s+(?:la\s+)?mes[a]+s?\s+(\d{4,6})\s+hasta\s+\d{4,6}\b", q_norm)
             or re.search(r"\bdesde\s+(?:el\s+|la\s+)?(\d{4,6})\s+(?:hasta|al)\s+(?:el\s+|la\s+)?\d{4,6}\b", q_norm)
@@ -2105,6 +2116,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             # Estado del conteo por distrito
             "cuantos distritos", "distritos que votaron", "distritos contaron",
             "cuantos centros de votacion", "cuantas mesas contaron",
+            "cuantas mesas se procesaron", "mesas procesadas", "mesas contabilizadas",
         }
         _is_national = any(p in q_norm for p in _NATIONAL_PHRASES)
         # Departamentos peruanos conocidos — para detectar geo sin preposición ("elecciones 2026 Arequipa")
