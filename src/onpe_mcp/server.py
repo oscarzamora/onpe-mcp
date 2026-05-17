@@ -992,6 +992,19 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             )
 
         # Historical/biographical queries → unknown
+        # Preguntas geográficas administrativas (no electorales): "cuántos departamentos tiene el peru"
+        if re.search(r"\bcu[aá]ntos?\s+(?:departamentos?|provincias?|distritos?|municipios?|regiones?|ciudades?)\s+(?:tiene|hay|existen?|son)\b", _q_norm_guard) and not any(kw in _q_norm_guard for kw in ("voto", "votos", "eleccion", "candidato", "mesa", "resultado")):
+            return ok_response(
+                {
+                    "intent": "unknown",
+                    "answer": (
+                        "Esa pregunta es sobre geografía administrativa, no sobre resultados electorales. "
+                        "Puedo ayudarte con *'¿cuántos votos obtuvo X en Arequipa?'* o *'top 5 en Lima'*."
+                    ),
+                },
+                started_ms=started_ms,
+            )
+
         _has_historical = bool(
             re.search(r"\b(?:antes\s+de\s+ser|antes\s+de\s+convertirse|biografia|historia\s+de|quien\s+fue\s+.+\s+antes|nació|murio|estudio|se\s+fund[oó]|se\s+cre[oó]|fue\s+fundado|fue\s+creado|cuando\s+(?:se\s+)?(?:fund|cre|naci|establec)|primer\s+(?:presidente|mandatario|ministro)|pib\b|gdp\b|inflaci[oó]n\b|econom[ií]a\b|desempleo\b|pobreza\b)\b", _q_norm_guard)
             and not any(kw in _q_norm_guard for kw in ("voto", "votos", "eleccion", "resultado", "candidato", "mesa"))
@@ -2172,6 +2185,11 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             # territorio nacional
             "todo el territorio peruano", "el territorio peruano", "territorio nacional",
             "territorio del peru", "en todo el territorio",
+            # extranjero / diaspora
+            "en el exterior", "del exterior", "en el extranjero", "del extranjero",
+            "residentes en el extranjero", "residentes en el exterior",
+            "peruanos en el exterior", "peruanos en el extranjero",
+            "comunidad peruana en el exterior",
             # disponibilidad de resultados
             "hay resultados", "resultados disponibles", "hay datos disponibles",
             "estan disponibles los resultados", "ya hay resultados",
