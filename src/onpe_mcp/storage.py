@@ -1469,19 +1469,19 @@ class DataStore:
                     (like_sub,),
                 ).fetchall()
                 if rows:
-                    return str(rows[0]["departamento"]).lower(), [str(r["ubigeo"]) for r in rows]
+                    return str(rows[0]["departamento"]).lower(), [str(r["ubigeo"]).lstrip("0") for r in rows]
                 rows = conn.execute(
                     "SELECT ubigeo, provincia FROM ubigeo_reniec WHERE provincia_norm LIKE ? LIMIT 2000",
                     (like_sub,),
                 ).fetchall()
                 if rows:
-                    return str(rows[0]["provincia"]).lower(), [str(r["ubigeo"]) for r in rows]
+                    return str(rows[0]["provincia"]).lower(), [str(r["ubigeo"]).lstrip("0") for r in rows]
                 rows = conn.execute(
                     "SELECT ubigeo, distrito FROM ubigeo_reniec WHERE distrito_norm LIKE ? LIMIT 500",
                     (like_sub,),
                 ).fetchall()
                 if rows:
-                    return str(rows[0]["distrito"]).lower(), [str(r["ubigeo"]) for r in rows]
+                    return str(rows[0]["distrito"]).lower(), [str(r["ubigeo"]).lstrip("0") for r in rows]
                 return None
 
             # 1. Intento con el query completo normalizado
