@@ -942,13 +942,16 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                 started_ms=started_ms,
             )
 
-        # Detectar preguntas de significado/definición/receta → unknown
+        # Detectar preguntas de significado/definición/receta/ciencia → unknown
         if re.search(
             r"\bqu[eé]\s+significa\b"
             r"|\bqu[eé]\s+(?:es|son)\s+(?:la|el|los|las)\s+(?:abstenci[oó]n|padr[oó]n|sufragio|escrutinio|ballot)\b"
             r"|\bcomo\s+se\s+dice\b|\bcomo\s+se\s+traduce\b"
             r"|\bcomo\s+se\s+(?:hace|prepara|cocina|elabora)\b"
-            r"|\bqu[eé]\s+ingredientes\b|\breceta\s+de\b",
+            r"|\bqu[eé]\s+ingredientes\b|\breceta\s+de\b"
+            r"|\bcu[aá]l\s+es\s+la\s+f[oó]rmula\b"
+            r"|\bcu[aá]l\s+es\s+la\s+composici[oó]n\b"
+            r"|\bcu[aá]l\s+es\s+la\s+estructura\s+(?:de|del|qu[ií]mica)\b",
             _q_norm_guard,
         ):
             return ok_response(
@@ -1475,7 +1478,12 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         # Treat queries with explicit numeric range as if they have "mesa" context
         if not _has_mesa and _numeric_range_m and mesa_match:
             _has_mesa = True
-        _has_performance = "primero" in q_norm or "primer " in q_norm or "gano" in q_norm
+        _has_performance = (
+            "primero" in q_norm or "primer " in q_norm or "gano" in q_norm
+            or "sacaron mas" in q_norm or "quienes sacaron" in q_norm
+            or "quien saco mas" in q_norm or "mas votos" in q_norm
+            or "obtuvo mas" in q_norm or "quien mas" in q_norm
+        )
         # "mesas XXXX" en plural con performance → prefijo, no mesa individual
         _has_plural_mesa_prefix = bool(
             re.search(r"\bmesas\s+\d{3,5}\b", q_norm) and _has_performance
@@ -1782,6 +1790,11 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             for c in _multi_candidates
         ]
 
+        # Guard: si ambos candidatos capturados son pronombres interrogativos → es consulta nacional
+        _INTERROGATIVE_PRONOUNS = {"quien", "que", "cual", "cuales", "quienes"}
+        if _multi_candidates and all(_norm(c.split()[0]) in _INTERROGATIVE_PRONOUNS for c in _multi_candidates):
+            _multi_candidates = []
+
         if _multi_candidates:
             _cand_map_mc = store.load_candidate_map(settings.source_dir / "candidato.txt")
             # Detectar scope geográfico para multi-candidato
@@ -2020,7 +2033,8 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "escrutinios", "escrutinio", "conteo final", "resultado del escrutinio",
             # margen y liderazgo
             "margen de victoria", "margen de diferencia", "distancia entre candidatos",
-            "cuantos peruanos votaron", "peruanos que votaron", "peruanos votaron",
+            "cuantos peruanos votaron en total", "cuantos peruanos votaron a nivel nacional",
+            "peruanos que votaron", "peruanos votaron",
             # porcentaje y ultimo
             "porcentaje final", "ultimo porcentaje", "porcentaje definitivo",
             "ultimos resultados", "ultimas noticias electorales", "resultados definitivos",
@@ -2039,6 +2053,10 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "quien esta arriba", "quien va arriba", "quien lidera el conteo",
             "arriba en el conteo", "lidera el conteo", "va ganando",
             "quien salio primero", "quien quedo primero", "primer lugar",
+            # más frases nacionales
+            "quien le gano a quien", "como quedo la votacion", "votacion nacional",
+            "como quedo el conteo", "como quedo el resultado", "como van los resultados",
+            "como quedaron las elecciones", "quien encabeza", "encabeza la votacion",
         }
         _is_national = any(p in q_norm for p in _NATIONAL_PHRASES)
         # Departamentos peruanos conocidos — para detectar geo sin preposición ("elecciones 2026 Arequipa")
