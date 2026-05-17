@@ -235,6 +235,10 @@ _NON_CANDIDATE_EXPRESSIONS: frozenset[str] = frozenset({
     # Palabras que NUNCA son candidatos
     "pais", "exterior", "extranjero", "extranjera",
     "nivel", "nacional",  # "a nivel nacional" capturado por Pattern 13 "candidato a nivel"
+    # Comandos y palabras de resumen que nunca son nombres de candidato
+    "dame", "deme", "danos", "muestra", "mostrar", "muestrame", "digame",
+    "resumen", "estadistica", "estadisticas", "tabla", "listado", "grafico",
+    "distribucion", "reporte", "informe",
 })
 
 # Patrón para detectar consultas multi-candidato: "X y Y" o "X e Y"
@@ -1310,8 +1314,16 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         _has_mesa = "mesa" in q_norm
         # También detectar rango numérico explícito "X a Y" (ej: "900100 a 900200")
         _numeric_range_m = re.search(r"\b(\d{4,6})\s+a\s+\d{4,6}\b", q_norm)
-        _has_range = any(w in q_norm for w in _RANGE_INDICATOR_WORDS) or bool(_numeric_range_m)
         _has_performance = "primero" in q_norm or "primer " in q_norm or "gano" in q_norm
+        # "mesas XXXX" en plural con performance → prefijo, no mesa individual
+        _has_plural_mesa_prefix = bool(
+            re.search(r"\bmesas\s+\d{3,5}\b", q_norm) and _has_performance
+        )
+        _has_range = (
+            any(w in q_norm for w in _RANGE_INDICATOR_WORDS)
+            or bool(_numeric_range_m)
+            or _has_plural_mesa_prefix
+        )
         if _has_mesa and _has_range and _has_performance:
             mesa_prefix = extract_mesa_prefix_claim(q)
             if not mesa_prefix:
@@ -1793,6 +1805,8 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "nivel nacional", "todo peru", "en el peru", "resultados nacionales",
             "a nivel de peru", "peru entero", "todo el pais",
             "quien gano las elecciones", "quien fue el ganador",
+            "presidente electo", "quien es el presidente",
+            "ganador de las elecciones", "ganador de la eleccion",
             "top candidatos", "top de candidatos",
             "candidatos con mas votos", "candidatos mas votados",
             "mas votados", "los mas votados",
@@ -1809,6 +1823,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "todos los partidos", "partidos politicos", "cada partido",
             "resumen de votos", "listado de candidatos", "listado completo",
             "resumen de elecciones", "resumen electoral", "reporte electoral",
+            "resumen de resultados", "resumen general",
             # votos especiales — movidos a check dinámico con guard geo
             # "votos en blanco", "votos nulos", "votos viciados", "en blanco", "votos blancos", "votos invalidos"
             # referencias temporales a elecciones — movidas a check dinámico
