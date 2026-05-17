@@ -308,7 +308,9 @@ _NON_CANDIDATE_EXPRESSIONS: frozenset[str] = frozenset({
     # Palabras que NUNCA son candidatos
     "pais", "exterior", "extranjero", "extranjera",
     "nivel", "nacional",  # "a nivel nacional" capturado por Pattern 13 "candidato a nivel"
-    # Comandos y palabras de resumen que nunca son nombres de candidato
+    # Verbos existenciales / auxiliares que no son nombres de candidato
+    "hubo", "habia", "habian", "habia habido", "hobo", "hay", "habia",
+    "hubo", "tenia", "tuve", "existen", "existio",
     "dame", "deme", "danos", "muestra", "mostrar", "muestrame", "digame",
     "resumen", "estadistica", "estadisticas", "tabla", "listado", "grafico",
     "distribucion", "reporte", "informe",
@@ -950,6 +952,8 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "nominacion", "nominaciones", "serie", "television", "musica", "cancion",
             "album", "artista", "concierto", "espectaculo", "teatro", "obra",
             "vuelo", "vuelos", "aerolinea", "aerolineas", "pasaje", "pasajes",
+            "champions", "liga europea", "liga espanola", "formula uno", "nba",
+            "real madrid", "barcelona", "chelsea", "arsenal", "manchester",
         })
         # "tiempo" alone is ambiguous; only block if paired with weather words
         # "cuanto vale/cuesta" = pricing query → non-electoral
@@ -1540,7 +1544,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         _has_mesa = "mesa" in q_norm
         # También detectar rango numérico explícito "X a Y" (ej: "900100 a 900200") o "entre X y Y" o "del X al Y"
         _numeric_range_m = (
-            re.search(r"\b(\d{4,6})\s+a\s+(?:la\s+|el\s+)?\d{4,6}\b", q_norm)
+            re.search(r"\b(\d{4,6})\s+al?\s+(?:la\s+|el\s+)?\d{4,6}\b", q_norm)
             or re.search(r"\bentre\s+(?:la\s+)?(?:mes[a]+s?\s+)?(\d{4,6})\s+y\s+\d{4,6}\b", q_norm)
             or re.search(r"\bdel?\s+(\d{4,6})\s+al?\s+\d{4,6}\b", q_norm)
             or re.search(r"\bdesde\s+(?:la\s+)?mes[a]+s?\s+(\d{4,6})\s+hasta\s+\d{4,6}\b", q_norm)
@@ -1871,6 +1875,27 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         if _multi_candidates and all(_norm(c.split()[0]) in _INTERROGATIVE_PRONOUNS for c in _multi_candidates):
             _multi_candidates = []
 
+        # Guard: si algún candidato capturado es una expresión no-candidato → no es multi_candidate
+        if _multi_candidates and any(_norm(c) in _NON_CANDIDATE_EXPRESSIONS for c in _multi_candidates):
+            _multi_candidates = []
+
+        # Guard: si ambos candidatos capturados son departamentos/lugares geográficos conocidos
+        # "cuantos votos hubo en Arequipa y Moquegua" → geo_domestic, no multi_candidate
+        if _multi_candidates and len(_multi_candidates) >= 2:
+            _KNOWN_DEPTS_MC = {
+                "lima", "arequipa", "callao", "cusco", "cuzco", "piura", "la libertad",
+                "junin", "puno", "cajamarca", "lambayeque", "loreto", "ica", "ucayali",
+                "ancash", "san martin", "amazonas", "tacna", "moquegua", "huancavelica",
+                "apurimac", "tumbes", "madre de dios", "pasco", "huanuco", "ayacucho",
+            }
+            _mc_both_geo = all(
+                _norm(c) in _KNOWN_DEPTS_MC or
+                any(_norm(c) in _norm(d) or _norm(d) in _norm(c) for d in _KNOWN_DEPTS_MC)
+                for c in _multi_candidates
+            )
+            if _mc_both_geo:
+                _multi_candidates = []  # let geo_domestic handle it
+
         if _multi_candidates:
             _cand_map_mc = store.load_candidate_map(settings.source_dir / "candidato.txt")
             # Detectar scope geográfico para multi-candidato
@@ -2137,6 +2162,12 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "cuantos distritos", "distritos que votaron", "distritos contaron",
             "cuantos centros de votacion", "cuantas mesas contaron",
             "cuantas mesas se procesaron", "mesas procesadas", "mesas contabilizadas",
+            # territorio nacional
+            "todo el territorio peruano", "el territorio peruano", "territorio nacional",
+            "territorio del peru", "en todo el territorio",
+            # disponibilidad de resultados
+            "hay resultados", "resultados disponibles", "hay datos disponibles",
+            "estan disponibles los resultados", "ya hay resultados",
         }
         _is_national = any(p in q_norm for p in _NATIONAL_PHRASES)
         # Departamentos peruanos conocidos — para detectar geo sin preposición ("elecciones 2026 Arequipa")
