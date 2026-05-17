@@ -68,7 +68,7 @@ _CANDIDATE_VOTE_PATTERNS = [
     # acepta "en total", "fue que" intercalados: "cuántos votos fue que obtuvo X"
     # acepta typos b/v frecuentes en español peruano: tubo/obtubo/obtubieron
     re.compile(
-        r"\bcu[aá]ntos?\s+votos?\s+(?:en\s+total\s+|fue\s+que\s+)?(?:tuvo|tuvieron|tubo|tubieron|sac[oó]|sacaron|tiene|tienen|obtuvo|obtuvieron|obtubo|obtubieron|gan[oó]|ganaron|logr[oó]|lograron|consigui[oó]|consiguieron|recibi[oó]|recibieron|junt[oó]|juntaron)\s+(.+?)(?:\s+(?:en|a\s+nivel|para)\b.*)?$",
+        r"\bcu[aá]ntos?\s+votos?\s+(?:en\s+total\s+|fue\s+que\s+)?(?:tuvo|tuvieron|tubo|tubieron|sac[oó]|sacaron|tiene|tienen|obtuvo|obtuvieron|obtubo|obtubieron|gan[oó]|ganaron|logr[oó]|lograron|consigui[oó]|consiguieron|recibi[oó]|recibieron|junt[oó]|juntaron|lleva|llevan|acumula|acumulan|sum[oó]|sumaron)\s+(.+?)(?:\s+(?:en|a\s+nivel|para)\b.*)?$",
         re.IGNORECASE,
     ),
     # "cuánto sacó/obtuvo X" / "que porcentaje obtuvo X" — también plural "cuántos"
@@ -132,8 +132,9 @@ _CANDIDATE_VOTE_PATTERNS = [
         re.IGNORECASE,
     ),
     # "candidato NAME en GEO" / "candidato NAME" — explicit candidate label
+    # Stop before interrogative words ("cuantos votos tuvo") to avoid capturing them
     re.compile(
-        r"\bcandidato\s+([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{2,40}?)(?:\s+(?:en|a\s+nivel)\b.*)?$",
+        r"\bcandidato\s+([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{2,40}?)(?:\s+(?:cu[aá]ntos?|qu[eé]|c[oó]mo|en|a\s+nivel)\b.*)?$",
         re.IGNORECASE,
     ),
     # "votos NAME" — reversed order (votos before name)
@@ -850,9 +851,14 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         # Evitar que cantidades tipo "50000 votos" o "mas de 100000" se traten como mesa
         if mesa_match and "mesa" not in _norm(q):
             _mstart, _mend = mesa_match.start(1), mesa_match.end(1)
-            _before = q[max(0, _mstart - 5):_mstart].lower()
+            _before = q[max(0, _mstart - 8):_mstart].lower()
             _after = q[_mend:_mend + 7].lower()
-            if _after.lstrip().startswith("voto") or re.search(r"\bde\s*$", _before):
+            if (
+                _after.lstrip().startswith("voto")
+                or re.search(r"\bde\s*$", _before)
+                or re.search(r"\bentre\s*$", _before)  # "entre X y Y votos"
+                or re.search(r"\by\s*$", _before)      # "X y N votos" (rango)
+            ):
                 mesa_match = None
         # Normalizar puntuación especial para mejorar pattern matching
         q = re.sub(r"[¿¡:;?!]", " ", q)
@@ -1731,11 +1737,16 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             # referencias temporales a elecciones
             "elecciones 2026", "elecciones 2021", "elecciones del 2026", "elecciones del 2021",
             "resultados 2026", "resultados 2021",
+            # frases adicionales
+            "elecciones presidenciales", "presidenciales 2026", "presidenciales 2021",
+            "participaron en las elecciones", "participacion en las elecciones",
+            "ranking completo", "tabla de resultados", "tabla electoral",
+            "tabla de candidatos", "lista completa", "todos los candidatos",
         }
         _is_national = any(p in q_norm for p in _NATIONAL_PHRASES)
         # Guard: "en/de" seguido de un nombre real (no artículo/colectivo/número) → hay contexto geo
         _GEO_IN_Q = re.search(
-            r"\b(?:en|de)\s+(?!\d)(?!(?:el|la|los|las|un|una|lo|este|ese|todos?|todas?|cada|alguno?|ninguno?|cualquier|la\s+eleccion)\b)\w",
+            r"\b(?:en|de)\s+(?!\d)(?!(?:el|la|los|las|un|una|lo|este|ese|todos?|todas?|cada|alguno?|ninguno?|cualquier|la\s+eleccion|candidatos?\b)\b)\w",
             q_norm
         )
         if not _is_national and re.search(r"\b(top\s*\d*|\d+\s+primeros?|primeros?\s+\d+)\b", q_norm) and (
@@ -1757,6 +1768,12 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             _is_national = True
         # "primera vuelta" / "segunda vuelta" sin geo explícita → nacional
         if not _is_national and re.search(r"\b(?:primera|segunda)\s+vuelta\b", q_norm) and not _GEO_IN_Q:
+            _is_national = True
+        # "entre X y Y votos" → consulta de rango → nacional
+        if not _is_national and re.search(r"\bentre\s+\d+\s+y\s+\d+\s+votos?\b", q_norm) and not _GEO_IN_Q:
+            _is_national = True
+        # "quienes tienen/tienen" + "votos" → nacional
+        if not _is_national and re.search(r"\bquienes?\s+(?:tienen|tienen|llevan|acumulan)\b", q_norm) and "votos" in q_norm and not _GEO_IN_Q:
             _is_national = True
         # "resultados de/del/en AÑO" → nacional (año de elecciones sin lugar)
         if not _is_national and re.search(r"\b(?:resultados?|elecciones?)\s+(?:de[l]?\s+)?\d{4}\b", q_norm) and not _GEO_IN_Q:
