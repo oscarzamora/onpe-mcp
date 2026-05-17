@@ -232,7 +232,9 @@ _MULTI_CANDIDATE_PATTERN = re.compile(
     r"|\bquien\s+(?:sac[oó]|tuvo|obtuvo|tiene)\s+m[aá]s\s+(.+?)\s+o\s+(.+?)(?:\?|$)"
     r"|\b(.+?)\s+cu[aá]ntos?\s+votos?\s+(?:y|e)\s+(.+?)\s+cu[aá]ntos?\s+votos?"
     r"|\b(?:si\s+)?(.+?)\s+(?:le\s+)?gan[oó]\s+(?:a|contra)\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
-    r"|\btanto\s+(.+?)\s+como\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$",
+    r"|\btanto\s+(.+?)\s+como\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
+    r"|\b(.+?)\s+(?:tuvo|sac[oó]|obtuvo)\s+m[aá]s\s+votos?\s+que\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
+    r"|\b(.+?)\s+m[aá]s\s+que\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$",
     re.IGNORECASE,
 )
 
@@ -864,6 +866,9 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         q = re.sub(r"[¿¡:;?!]", " ", q)
         # Normalizar símbolo % → "porcentaje" (en cualquier posición)
         q = q.replace("%", " porcentaje ")
+        # Normalizar typos fonéticos frecuentes en español peruano (b/v, c/s)
+        q = re.sub(r"\bbotos?\b", "votos", q, flags=re.IGNORECASE)  # "botos" → "votos"
+        q = re.sub(r"\belecsion\b", "eleccion", q, flags=re.IGNORECASE)  # "elecsion" → "eleccion"
         q = re.sub(r"\s{2,}", " ", q).strip()
         # Eliminar muletillas verbales del inicio/fin (normalización lenguaje natural)
         q = _strip_filler(q)
@@ -1472,8 +1477,8 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                         r"^(?:el|la|los|las|un|una)\s+(?:doctor[a]?|dr\.?|ing\.?|ingeniero[a]?|licenciado[a]?|lic\.?|profesor[a]?|prof\.?|señor[a]?|don|doña)\s+",
                         "", _cfe_cand, flags=re.IGNORECASE
                     ).strip()
-                    # Si después del artículo no hay honorífico, al menos quitar "el/la" inicial
-                    _cfe_cand = re.sub(r"^(?:el|la)\s+(?=[A-ZÁÉÍÓÚÑ])", "", _cfe_cand).strip()
+                    # Si después del artículo no hay honorífico, quitar "el/la/los/las" inicial
+                    _cfe_cand = re.sub(r"^(?:el|la|los|las)\s+(?=[a-záéíóúñ])", "", _cfe_cand).strip()
                     _cfe_n = _norm(_cfe_cand)
                     _cfe_w = set(_cfe_n.split())
                     if (
@@ -1722,7 +1727,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "ranking nacional", "ranking en peru",
             "resultados generales", "resultados electorales generales",
             "resultados totales", "resultados finales",
-            "resultados de la eleccion", "resultado de la eleccion",
+            "resultado de la eleccion",  # nota: "resultados de la eleccion" movida a check dinámico
             "ganadores de", "ganadores en la",
             "total de votos", "total votos", "votos por candidato",
             "en total", "en general", "en conjunto",
@@ -1742,6 +1747,9 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "participaron en las elecciones", "participacion en las elecciones",
             "ranking completo", "tabla de resultados", "tabla electoral",
             "tabla de candidatos", "lista completa", "todos los candidatos",
+            # regiones naturales (sin geo específico)
+            "sierra peruana", "selva peruana", "costa peruana",
+            "en la sierra", "en la selva", "en la costa",
         }
         _is_national = any(p in q_norm for p in _NATIONAL_PHRASES)
         # Guard: "en/de" seguido de un nombre real (no artículo/colectivo/número) → hay contexto geo
@@ -1765,6 +1773,9 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                 _is_national = True
         # "candidatos/candidato" sin geo → nacional (ej: "cuántos candidatos se presentaron")
         if not _is_national and re.search(r"\bcandidatos?\b", q_norm) and not _GEO_IN_Q:
+            _is_national = True
+        # "resultados de la eleccion" sin geo específico → nacional
+        if not _is_national and re.search(r"\bresultados?\s+de\s+(?:la\s+)?elecci[oó]n\b", q_norm) and not _GEO_IN_Q:
             _is_national = True
         # "primera vuelta" / "segunda vuelta" sin geo explícita → nacional
         if not _is_national and re.search(r"\b(?:primera|segunda)\s+vuelta\b", q_norm) and not _GEO_IN_Q:
