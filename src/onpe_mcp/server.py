@@ -162,6 +162,9 @@ _NON_CANDIDATE_EXPRESSIONS: frozenset[str] = frozenset({
     # Tipos de votos que NO son candidatos
     "nulos", "blancos", "viciados", "impugnados",
     "votos nulos", "votos blancos", "votos viciados",
+    # Palabras electorales que NO son nombres de candidato
+    "elecciones", "eleccion", "comicios", "sufragio",
+    "congreso", "asamblea", "parlamento",
 })
 
 # Patrón para detectar consultas multi-candidato: "X y Y" o "X e Y"
@@ -1573,6 +1576,8 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "mas votados", "los mas votados",
             "podio electoral", "podio", "lideres electorales",
             "ranking nacional", "ranking en peru",
+            "resultados generales", "resultados electorales generales",
+            "resultados totales",
         }
         _is_national = any(p in q_norm for p in _NATIONAL_PHRASES)
         if not _is_national and re.search(r"\b(top\s*\d*|\d+\s+primeros?|primeros?\s+\d+)\b", q_norm) and (
@@ -1581,6 +1586,9 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         ):
             _is_national = True
         if not _is_national and re.search(r"\bm[aá]s\s+votos\b", q_norm) and "candidatos" in q_norm:
+            _is_national = True
+        # "dame el top 5" / "top 3" sin contexto geográfico → nacional
+        if not _is_national and re.search(r"\btop\s+\d+\b", q_norm) and not re.search(r"\ben\s+\w", q_norm):
             _is_national = True
 
         if _is_national:
