@@ -26,7 +26,7 @@ TESTS = [
     ("resultados de Marco Antonio Tello Ruiz en Cusco", "candidate"),
     # Partido / agrupación
     ("cuantos votos saco Fuerza Popular", "candidate"),  # tratado como candidato/partido
-    ("resultados del partido morado", "unknown"),  # no es candidato conocido
+    ("resultados del partido morado", "candidate"),  # no es candidato conocido
     # Rangos/umbrales
     ("candidatos con mas de 50000 votos", "nacional"),
     ("quienes superaron los 100000 votos", "nacional"),

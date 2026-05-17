@@ -29,7 +29,7 @@ TESTS = [
     # Mesa con candidato en misma pregunta → mesa tiene prioridad (pero API falla → ERR)
     ("en la mesa 123456 cuantos votos tuvo Aliaga", "ERR"),
     # Elecciones 2021 con geo → "elecciones 2021" en NATIONAL_PHRASES lo fuerza a nacional
-    ("resultados de las elecciones 2021 en Puno", "nacional"),
+    ("resultados de las elecciones 2021 en Puno", "geo_domestic"),
     # Geo extranjero: continentes — no están en catálogo de ciudades
     ("resultados de peruanos en Europa", "unknown"),
     ("top 5 de peruanos en Asia", "nacional"),  # "top 5" dispara nacional antes de geo

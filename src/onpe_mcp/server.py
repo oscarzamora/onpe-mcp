@@ -157,6 +157,16 @@ _CANDIDATE_VOTE_PATTERNS = [
         r"\b(?:sobre|acerca\s+de|datos?\s+(?:de|sobre))\s+([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{2,40}?)(?:\s+(?:en|a\s+nivel)\b.*)?$",
         re.IGNORECASE,
     ),
+    # "le fue a NAME en GEO" / "qué tal le fue a NAME" — coloquial sin sujeto al inicio
+    re.compile(
+        r"\b(?:qu[eé]\s+tal\s+)?le\s+fu[eé]\s+a\s+([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,30}?)(?:\s+(?:en|a\s+nivel)\b.*)?$",
+        re.IGNORECASE,
+    ),
+    # "cómo quedó/fue NAME en GEO" / "como salio NAME en" — coloquial con verbo+nombre
+    re.compile(
+        r"\bc[oó]mo\s+(?:qued[oó]?|fue|sali[oó]|termin[oó])\s+([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,30}?)(?:\s+en\b.*)?$",
+        re.IGNORECASE,
+    ),
 ]
 
 # Aliases culturales/coloquiales para candidatos.
@@ -215,6 +225,10 @@ _NON_CANDIDATE_EXPRESSIONS: frozenset[str] = frozenset({
     "gente", "pueblo", "poblacion",
     "puedes", "puede", "puedo", "podria", "dime", "sabes", "sabe", "entiendo",
     "paso", "paso en",  # verbo "pasó" coloquial en preguntas geográficas
+    "como",  # verbo/pronombre — capturado por Pattern 9 como "como quedo" antes del nuevo patrón
+    # Palabras que NUNCA son candidatos
+    "pais", "exterior", "extranjero", "extranjera",
+    "nivel", "nacional",  # "a nivel nacional" capturado por Pattern 13 "candidato a nivel"
 })
 
 # Patrón para detectar consultas multi-candidato: "X y Y" o "X e Y"
@@ -1479,13 +1493,15 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                     ).strip()
                     # Si después del artículo no hay honorífico, quitar "el/la/los/las" inicial
                     _cfe_cand = re.sub(r"^(?:el|la|los|las)\s+(?=[a-záéíóúñ])", "", _cfe_cand).strip()
+                    # Quitar preposición inicial "a/para" (ej: "a Forsyth", "para Lopez Aliaga")
+                    _cfe_cand = re.sub(r"^(?:a|para)\s+(?=[A-Za-záéíóúñÁÉÍÓÚÑ])", "", _cfe_cand).strip()
                     _cfe_n = _norm(_cfe_cand)
                     _cfe_w = set(_cfe_n.split())
                     if (
                         _cfe_n not in _NON_CANDIDATE_EXPRESSIONS
                         and not _cfe_n.startswith("en ")
                         and not _cfe_n.startswith("a nivel")
-                        and not re.match(r"(?:para|hacia|desde)\s", _cfe_n)
+                        and not re.match(r"(?:hacia|desde)\s", _cfe_n)
                         and not re.fullmatch(r"\d+", _cfe_n.strip())  # no son candidatos números puros
                         and len(_cfe_n.strip()) >= 3
                         and not (_cfe_w & _NON_CANDIDATE_EXPRESSIONS)
@@ -1594,7 +1610,12 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             store.append_raw_event("onpe_chat_multi_candidate", {"query": q})
             return ok_response(data, started_ms=started_ms)
 
-        if _candidate_from_pattern_early or "candidato" in q_norm:
+        # "candidato" en contexto colectivo ("cada candidato", "todos los candidatos" + nacional) → NO candidate early
+        _cand_in_collective = (
+            re.search(r"\b(?:cada|todos?\s+(?:los|las)?|cualquier)\s+candidatos?\b", q_norm)
+            or any(p in q_norm for p in ("a nivel nacional", "nivel nacional", "todo el peru", "todo peru", "en el peru"))
+        )
+        if _candidate_from_pattern_early or ("candidato" in q_norm and not _cand_in_collective):
             _cand_map_early = store.load_candidate_map(settings.source_dir / "candidato.txt")
 
             # Detectar scope geográfico en la query: "en Puno", "en Lima", "en Loreto"
@@ -1736,12 +1757,11 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "todos los partidos", "partidos politicos", "cada partido",
             "resumen de votos", "listado de candidatos", "listado completo",
             "resumen de elecciones", "resumen electoral", "reporte electoral",
-            # votos especiales
-            "votos en blanco", "votos nulos", "votos viciados",
-            "en blanco", "votos blancos", "votos invalidos",
-            # referencias temporales a elecciones
-            "elecciones 2026", "elecciones 2021", "elecciones del 2026", "elecciones del 2021",
-            "resultados 2026", "resultados 2021",
+            # votos especiales — movidos a check dinámico con guard geo
+            # "votos en blanco", "votos nulos", "votos viciados", "en blanco", "votos blancos", "votos invalidos"
+            # referencias temporales a elecciones — movidas a check dinámico
+            # "elecciones 2026", "elecciones 2021", "elecciones del 2026", "elecciones del 2021",
+            # "resultados 2026", "resultados 2021",
             # frases adicionales
             "elecciones presidenciales", "presidenciales 2026", "presidenciales 2021",
             "participaron en las elecciones", "participacion en las elecciones",
@@ -1752,11 +1772,29 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "en la sierra", "en la selva", "en la costa",
         }
         _is_national = any(p in q_norm for p in _NATIONAL_PHRASES)
-        # Guard: "en/de" seguido de un nombre real (no artículo/colectivo/número) → hay contexto geo
-        _GEO_IN_Q = re.search(
-            r"\b(?:en|de)\s+(?!\d)(?!(?:el|la|los|las|un|una|lo|este|ese|todos?|todas?|cada|alguno?|ninguno?|cualquier|la\s+eleccion|candidatos?\b)\b)\w",
-            q_norm
+        # Departamentos peruanos conocidos — para detectar geo sin preposición ("elecciones 2026 Arequipa")
+        _PERU_DEPTS = {
+            "lima", "arequipa", "callao", "cusco", "cuzco", "piura", "la libertad",
+            "junin", "puno", "cajamarca", "lambayeque", "loreto", "ica", "ucayali",
+            "ancash", "san martin", "amazonas", "tacna", "moquegua", "huancavelica",
+            "apurimac", "tumbes", "madre de dios", "pasco", "huanuco", "ayacucho",
+        }
+        # Solo activar _bare_dept si hay contexto electoral (año/resultados/votos) pero NO "candidato"
+        _bare_dept_in_q = (
+            any(re.search(r"\b" + re.escape(d) + r"\b", q_norm) for d in _PERU_DEPTS)
+            and re.search(r"\b(?:resultados?|elecciones?|votos?|\d{4})\b", q_norm)
+            and "candidato" not in q_norm
         )
+        # Guard: "en/de" (+ artículo opcional) seguido de un nombre real → hay contexto geo
+        # Se excluyen palabras del dominio electoral que nunca son lugares.
+        _GEO_IN_Q = re.search(
+            r"\b(?:en|de)\s+(?:(?:el|la|los|las)\s+)?(?!\d)"
+            r"(?!(?:todos?|todas?|cada|alguno?|ninguno?|cualquier|la\s+eleccion|candidatos?"
+            r"|votos?|voto|porcentaje|datos?|resultado|resultados|informacion|info"
+            r"|blanco|nulos?|viciados?|blancos|invalidos?|total|totales|general|generales"
+            r"|primera|segunda|tercera|vuelta|turno|ronda|siguiente|anterior)\b)\w{3,}",
+            q_norm
+        ) or _bare_dept_in_q
         if not _is_national and re.search(r"\b(top\s*\d*|\d+\s+primeros?|primeros?\s+\d+)\b", q_norm) and (
             "nacional" in q_norm or "pais" in q_norm or "peru" in q_norm
             or ("candidatos" in q_norm and not _GEO_IN_Q)
@@ -1786,8 +1824,17 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         # "quienes tienen/tienen" + "votos" → nacional
         if not _is_national and re.search(r"\bquienes?\s+(?:tienen|tienen|llevan|acumulan)\b", q_norm) and "votos" in q_norm and not _GEO_IN_Q:
             _is_national = True
-        # "resultados de/del/en AÑO" → nacional (año de elecciones sin lugar)
+        # "resultados de/del/en AÑO" / "elecciones AÑO" → nacional (año de elecciones sin lugar)
         if not _is_national and re.search(r"\b(?:resultados?|elecciones?)\s+(?:de[l]?\s+)?\d{4}\b", q_norm) and not _GEO_IN_Q:
+            _is_national = True
+        # "votos en blanco/nulos/viciados" sin geo explícito → nacional
+        if not _is_national and re.search(r"\bvotos?\s+(?:en\s+)?(?:blanco|nulos?|viciados?|blancos|inv[aá]lidos?)\b", q_norm) and not _GEO_IN_Q:
+            _is_national = True
+        # "cada/todos los candidato(s)" → consulta colectiva → nacional
+        if not _is_national and re.search(r"\b(?:cada|todos?\s+(?:los|las)?)\s+candidatos?\b", q_norm) and not _GEO_IN_Q:
+            _is_national = True
+        # "distribución de votos" → nacional
+        if not _is_national and re.search(r"\bdistribuci[oó]n\s+de\s+votos?\b", q_norm) and not _GEO_IN_Q:
             _is_national = True
         # "quienes ganaron/superaron/consiguieron" sin geo → nacional; con "en PLACE" → geo_domestic
         if not _is_national and re.search(r"\bquienes?\s+(?:son\s+(?:los\s+)?)?(?:gan[ao]ron?|lider(?:es)?|superaron|consiguieron|obtuvieron|tuvieron)\b", q_norm):
@@ -2104,13 +2151,15 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                         "", _late_cand, flags=re.IGNORECASE
                     ).strip()
                     _late_cand = re.sub(r"^(?:el|la)\s+(?=[A-ZÁÉÍÓÚÑ])", "", _late_cand).strip()
+                    # Quitar preposición inicial "a/para"
+                    _late_cand = re.sub(r"^(?:a|para)\s+(?=[A-Za-záéíóúñÁÉÍÓÚÑ])", "", _late_cand).strip()
                     _late_n = _norm(_late_cand)
                     _late_w = set(_late_n.split())
                     if (
                         _late_n not in _NON_CANDIDATE_EXPRESSIONS
                         and not _late_n.startswith("en ")
                         and not _late_n.startswith("a nivel")
-                        and not re.match(r"(?:para|hacia|desde)\s", _late_n)
+                        and not re.match(r"(?:hacia|desde)\s", _late_n)
                         and not re.fullmatch(r"\d+", _late_n.strip())  # no son candidatos números puros
                         and len(_late_n.strip()) >= 3
                         and not (_late_w & _NON_CANDIDATE_EXPRESSIONS)

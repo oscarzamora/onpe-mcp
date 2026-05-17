@@ -35,7 +35,7 @@ TESTS = [
     ("el candidato que mas votos saco en Lima", "geo_domestic"),
     ("el que gano en Arequipa", "geo_domestic"),
     # Comparación directa
-    ("Aliaga tuvo mas votos que Sagasti en Puno", "candidate"),
+    ("Aliaga tuvo mas votos que Sagasti en Puno", "multi_candidate"),
     # Mesa con "código"
     ("codigo de mesa 123456", "ERR"),  # API live falla → ERR es correcto
     ("dame los resultados del codigo 050100", "mesa"),  # "codigo" en NON_CAND, ruteará a mesa via late fallback
