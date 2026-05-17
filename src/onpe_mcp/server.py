@@ -66,8 +66,9 @@ _CANDIDATE_VOTE_PATTERNS = [
     # "cuántos votos sacó/tuvo/obtuvo/logró/consiguió/recibió/juntó X"
     # incluye plural "sacaron/tuvieron/obtuvieron" para multi-candidato
     # acepta "en total" intercalado: "cuántos votos en total obtuvo X"
+    # acepta typos b/v frecuentes en español peruano: tubo/obtubo/obtubieron
     re.compile(
-        r"\bcu[aá]ntos?\s+votos?\s+(?:en\s+total\s+)?(?:tuvo|tuvieron|sac[oó]|sacaron|tiene|tienen|obtuvo|obtuvieron|gan[oó]|ganaron|logr[oó]|lograron|consigui[oó]|consiguieron|recibi[oó]|recibieron|junt[oó]|juntaron)\s+(.+?)(?:\s+(?:en|a\s+nivel|para)\b.*)?$",
+        r"\bcu[aá]ntos?\s+votos?\s+(?:en\s+total\s+)?(?:tuvo|tuvieron|tubo|tubieron|sac[oó]|sacaron|tiene|tienen|obtuvo|obtuvieron|obtubo|obtubieron|gan[oó]|ganaron|logr[oó]|lograron|consigui[oó]|consiguieron|recibi[oó]|recibieron|junt[oó]|juntaron)\s+(.+?)(?:\s+(?:en|a\s+nivel|para)\b.*)?$",
         re.IGNORECASE,
     ),
     # "cuánto sacó/obtuvo/logró/llevó/anotó/juntó X" (sin "votos")
@@ -109,9 +110,9 @@ _CANDIDATE_VOTE_PATTERNS = [
         r"\bqu[eé]\s+(?:lugar|posici[oó]n|puesto)\s+(?:sac[oó]|tiene|obtuvo|qued[oó])\s+(.+?)$",
         re.IGNORECASE,
     ),
-    # "X cuántos votos" (order reversed)
+    # "X cuántos votos" (order reversed) — also "X cuántos lleva/tiene/acumula"
     re.compile(
-        r"^(.+?)\s+cu[aá]ntos?\s+votos?(?:\s+(?:sac[oó]|tuvo|tiene|obtuvo))?",
+        r"^(.+?)\s+cu[aá]ntos?\s+(?:votos?\s+)?(?:sac[oó]|tuvo|tiene|obtuvo|lleva|acumula|sum[oó]|consigui[oó])?",
         re.IGNORECASE,
     ),
     # Bare "NAME en GEO" / "NAME en GEO?" — fallback for queries sin verbo
