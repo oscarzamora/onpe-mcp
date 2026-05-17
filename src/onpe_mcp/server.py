@@ -136,7 +136,7 @@ _CANDIDATE_VOTE_PATTERNS = [
     ),
     # "resultados de X" / "resultados nacionales de X" / "puntaje de X" / "resultados del X" / "resultados para X" / "porcentaje de X"
     re.compile(
-        r"\b(?:result(?:ados?|[oó])(?:\s+\w+)?\s+(?:de|del|para)|puntaje\s+(?:de|del)|porcentaje\s+(?:de|del|que\s+obtuvo|que\s+sac[oó]))\s+(.+?)(?:\s+(?:en|a\s+nivel|total|nacional)\b.*)?$",
+        r"\b(?:result(?:ados?|[oó])(?:\s+(?:electorales?|nacionales?|totales?|parciales?|finales?|provisorios?|oficiales?))?\s+(?:de|del|para)|puntaje\s+(?:de|del)|porcentaje\s+(?:de|del|que\s+obtuvo|que\s+sac[oó]))\s+(.+?)(?:\s+(?:en|a\s+nivel|total|nacional)\b.*)?$",
         re.IGNORECASE,
     ),
     # "votación de X" / "votación total de X"
@@ -221,6 +221,11 @@ _CANDIDATE_VOTE_PATTERNS = [
         r"^([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,35})\s+resultados?$",
         re.IGNORECASE,
     ),
+    # "resultados NAME" — bare "resultados" + candidate name (no preposition)
+    re.compile(
+        r"^resultados?\s+([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,35})$",
+        re.IGNORECASE,
+    ),
     # "NAME qué tal / cómo le fue" — coloquial candidate inquiry
     re.compile(
         r"^([A-Za-záéíóúñÁÉÍÓÚÑ]+(?:\s+[A-Za-záéíóúñÁÉÍÓÚÑ]+){0,2})\s+(?:qu[eé]\s+tal|c[oó]mo\s+(?:le\s+)?(?:fue|quedo|qued[oó]|va))\b",
@@ -254,6 +259,11 @@ _CANDIDATE_VOTE_PATTERNS = [
     # "cuantos votos le fueron adjudicados/asignados a NAME"
     re.compile(
         r"\bcu[aá]ntos?\s+votos?\s+(?:le\s+)?(?:fueron|han\s+sido)\s+(?:adjudicados?|asignados?|otorgados?|atribuidos?|dados?)\s+a\s+([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,40}?)(?:\s+(?:en|a\s+nivel)\b.*)?$",
+        re.IGNORECASE,
+    ),
+    # "cuantos votos NAME" — bare form without verb (e.g. "cuantos votos Aliaga")
+    re.compile(
+        r"\bcu[aá]ntos?\s+votos?\s+([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,40}?)(?:\s+(?:en|a\s+nivel)\b.*)?$",
         re.IGNORECASE,
     ),
 ]
@@ -324,9 +334,16 @@ _NON_CANDIDATE_EXPRESSIONS: frozenset[str] = frozenset({
     "dame", "deme", "danos", "muestra", "mostrar", "muestrame", "digame",
     "resumen", "estadistica", "estadisticas", "tabla", "listado", "grafico",
     "distribucion", "reporte", "informe",
+    # Adjetivos de resultado que NO son nombres de candidato
+    "finales", "final", "definitivos", "definitivo", "provisorios", "provisorio",
+    "parciales", "parcial", "totales", "total", "generales", "general",
+    "preliminares", "preliminar", "oficiales", "oficial", "actualizados", "actualizado",
+    # Departamentos peruanos — nunca son nombres de candidato
+    "lima", "arequipa", "callao", "cusco", "cuzco", "piura", "la libertad",
+    "junin", "puno", "cajamarca", "lambayeque", "loreto", "ica", "ucayali",
+    "ancash", "san martin", "amazonas", "tacna", "moquegua", "huancavelica",
+    "apurimac", "tumbes", "madre de dios", "pasco", "huanuco", "ayacucho",
 })
-
-# Patrón para detectar consultas multi-candidato: "X y Y" o "X e Y"
 _MULTI_CANDIDATE_PATTERN = re.compile(
     r"\bvotos?\s+(?:de\s+)?(.+?)\s+(?:y|e)\s+(.+?)(?:\s+(?:en|a\s+nivel|total)\b.*)?$"
     r"|\b(.+?)\s+y\s+(.+?)\s+cu[aá]ntos?\s+votos?"
@@ -925,7 +942,12 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
 
         # ── Guard: saludos y queries muy cortas ─────────────────────────────
         _GREETINGS = {"hola", "hi", "hey", "buenas", "ola", "hello", "saludos", "que tal"}
-        _GREETING_PHRASES = {"hola como estas", "hola como esta", "hola que tal", "como estas", "como esta usted", "buenos dias", "buenas noches", "buenas tardes"}
+        _GREETING_PHRASES = {
+            "hola como estas", "hola como esta", "hola que tal", "como estas", "como esta usted",
+            "buenos dias", "buenas noches", "buenas tardes",
+            "hola buenas tardes", "hola buenas noches", "hola buenos dias",
+            "hola buen dia", "hola buen tarde", "buen dia", "buenas como estas",
+        }
         _PERSONAL_QUERIES = {
             "como te llamas", "cual es tu nombre", "quien eres", "que eres",
             "que puedes hacer", "como te llamo", "tu nombre", "como funciona",
@@ -2364,6 +2386,12 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                 _is_national = True
         # "resultados electorales" sin geo específico → nacional
         if not _is_national and re.search(r"\bresultados?\s+electorales?\b", q_norm) and not _GEO_IN_Q:
+            _is_national = True
+        # "informacion/datos/noticias de elecciones" → nacional
+        if not _is_national and re.search(r"\b(?:elecciones?|electoral(?:es)?)\b", q_norm) and not _GEO_IN_Q and not _dept_name_in_q and not re.search(r"\b20(?:21|22|23|24|25)\b", q_norm):
+            _is_national = True
+        # bare standalone electoral keywords → nacional
+        if not _is_national and q_norm.strip() in {"resultados", "resultado", "quien gano", "quien gan"}:
             _is_national = True
         # "top N en Peru" / "resultados en Peru" (país entero sin dept específico) → nacional
         if not _is_national and re.search(r"\b(?:en|del?)\s+peru\b", q_norm) and not any(re.search(r"\b" + re.escape(d) + r"\b", q_norm) for d in _PERU_DEPTS):
