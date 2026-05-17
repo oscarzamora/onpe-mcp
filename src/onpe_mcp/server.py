@@ -809,8 +809,18 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
     started_ms = now_ms()
     try:
         q = str(query or "").strip()
-        if not q:
-            raise ValueError("query no puede estar vacía")
+        if not q or len(q) < 3:
+            return ok_response(
+                {
+                    "intent": "unknown",
+                    "answer": (
+                        "¡Hola! Puedo responder consultas sobre los resultados electorales del Perú 2026. "
+                        "Por ejemplo: *'¿cuántos votos obtuvo López Aliaga en Lima?'* "
+                        "o *'top 5 en Arequipa'* o *'senadores para Puno'*."
+                    ),
+                },
+                started_ms=started_ms,
+            )
 
         # ── Guard: saludos y queries muy cortas ─────────────────────────────
         _GREETINGS = {"hola", "hi", "hey", "buenas", "ola", "hello", "saludos", "que tal"}
@@ -1326,6 +1336,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         # gano = ganó normalizado (NFD strip).
         _RANGE_INDICATOR_WORDS = {
             "arranc", "empiez", "prefij", "comienz", "comenz", "inicia", "partir",
+            "bloque", "grupo", "serie", "rango", "lote",
         }
         _has_mesa = "mesa" in q_norm
         # También detectar rango numérico explícito "X a Y" (ej: "900100 a 900200")
@@ -1924,6 +1935,9 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             _is_national = True
         # "distribución de votos" → nacional
         if not _is_national and re.search(r"\bdistribuci[oó]n\s+de\s+votos?\b", q_norm) and not _GEO_IN_Q:
+            _is_national = True
+        # "porcentaje (final) de votos" sin geo → nacional
+        if not _is_national and re.search(r"\bporcentaje\s+(?:\w+\s+)?de\s+votos?\b", q_norm) and not _GEO_IN_Q:
             _is_national = True
         # "quien salió en primer/segundo lugar" → ranking nacional sin geo
         if not _is_national and re.search(r"\b(?:quien|quienes?)\s+(?:sali[oó]|qued[oó]|result[oó])\s+en\s+(?:primer|segundo|tercer|cuarto|quinto)\b", q_norm) and not _GEO_IN_Q:
