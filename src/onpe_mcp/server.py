@@ -220,7 +220,7 @@ _MULTI_CANDIDATE_PATTERN = re.compile(
     r"|\bdiferencia\s+(?:de\s+votos?\s+)?entre\s+(.+?)\s+y\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\b(.+?)\s+frente\s+a\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\b(.+?)\s+contra\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
-    r"|\b(.+?)\s+o\s+(.+?)\s+(?:quien|cu[aá]l|cu[aá]ntos?)\s+(?:sac[oó]|tuvo|obtuvo|tiene|tiene\s+m[aá]s)"
+    r"|\b(.+?)\s+o\s+(.+?)\s+(?:quien|cu[aá]l|cu[aá]ntos?)\s+(?:sac[oó]|tuvo|obtuvo|tiene|tiene\s+m[aá]s|gan[oó]|logr[oó])"
     r"|\bquien\s+(?:sac[oó]|tuvo|obtuvo|tiene)\s+m[aá]s\s+(.+?)\s+o\s+(.+?)(?:\?|$)"
     r"|\b(.+?)\s+cu[aá]ntos?\s+votos?\s+(?:y|e)\s+(.+?)\s+cu[aá]ntos?\s+votos?"
     r"|\b(?:si\s+)?(.+?)\s+(?:le\s+)?gan[oó]\s+(?:a|contra)\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
@@ -844,11 +844,16 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         q = re.sub(r"\s{2,}", " ", q).strip()
         # Eliminar muletillas verbales del inicio/fin (normalización lenguaje natural)
         q = _strip_filler(q)
+        # Eliminar frases intermedias como "fue a la segunda vuelta" que no aportan intención
+        q = re.sub(
+            r"\s+(?:fue|llego|llegó|entro|entró|pasó|paso|llega|pasa)\s+a\s+la\s+(?:primera|segunda)\s+vuelta\b",
+            " ", q, flags=re.IGNORECASE
+        ).strip()
         q_norm = _norm(q)
         top_n = extract_top_n(q, default=5, minimum=1, maximum=20)
 
-        # Intención 0: legislativo (diputados/senadores/escaños) más votado por distrito
-        if "diputad" in q_norm or "senador" in q_norm or "esca" in q_norm:
+        # Intención 0: legislativo (diputados/senadores/escaños/congresistas) más votado por distrito
+        if "diputad" in q_norm or "senador" in q_norm or "esca" in q_norm or "congresista" in q_norm:
             cargo = "senadores" if ("senador" in q_norm or ("esca" in q_norm and "senador" in q_norm)) else "diputados"
             if "senador" in q_norm:
                 cargo = "senadores"
@@ -1512,9 +1517,11 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             _mc_results = []
             for _mc_expr in _multi_candidates:
                 _mc_expr_norm = _norm(_mc_expr)
+                _mc_pat = re.compile(r'\b' + re.escape(_mc_expr_norm) + r'\b', re.IGNORECASE) if _mc_expr_norm else None
                 _mc_match = next(
-                    (it for it in _aggs_mc if _mc_expr_norm in _norm(_cand_map_mc.get(str(it["partido_id"]), ""))
-                     or _mc_expr_norm in _norm(str(it["nombre_partido"]))),
+                    (it for it in _aggs_mc if _mc_pat and (
+                        _mc_pat.search(_norm(_cand_map_mc.get(str(it["partido_id"]), "")))
+                        or _mc_pat.search(_norm(str(it["nombre_partido"]))))),
                     None,
                 )
                 if _mc_match:
@@ -1573,11 +1580,12 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             _aggs_early = store.aggregate_votes_by_party(ubigeos=_scope_ubigeos)
             _expr_early = _norm(_candidate_from_pattern_early or q)
             _match_early = None
+            _expr_early_pat = re.compile(r'\b' + re.escape(_expr_early) + r'\b', re.IGNORECASE) if _expr_early else None
             for _item in _aggs_early:
                 _pid = str(_item["partido_id"])
                 _cname = _cand_map_early.get(_pid, "")
-                if _expr_early and (
-                    _expr_early in _norm(_cname) or _expr_early in _norm(str(_item["nombre_partido"]))
+                if _expr_early_pat and (
+                    _expr_early_pat.search(_norm(_cname)) or _expr_early_pat.search(_norm(str(_item["nombre_partido"])))
                 ):
                     _match_early = {**_item, "candidato": _cname}
                     break
@@ -2053,13 +2061,14 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             expr_norm = _norm(candidate_expr)
 
             chosen: dict[str, Any] | None = None
+            _late_pat = re.compile(r'\b' + re.escape(expr_norm) + r'\b', re.IGNORECASE) if expr_norm else None
             for item in aggregates:
                 pid = str(item["partido_id"])
                 cand = candidate_map.get(pid, "")
                 if expr_norm.isdigit() and pid == expr_norm:
                     chosen = {**item, "candidato": cand}
                     break
-                if expr_norm and (expr_norm in _norm(cand) or expr_norm in _norm(str(item["nombre_partido"]))):
+                if _late_pat and (_late_pat.search(_norm(cand)) or _late_pat.search(_norm(str(item["nombre_partido"])))):
                     chosen = {**item, "candidato": cand}
                     break
 
