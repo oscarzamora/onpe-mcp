@@ -1457,21 +1457,24 @@ class DataStore:
                 return None
 
             def _search(term: str) -> tuple[str, list[str]] | None:
+                # For short tokens (<6 chars) use prefix match to avoid false positives
+                # e.g. "saco" would match "piSACOma" with substring, but not with prefix
+                like_sub = f"%{term}%" if len(term) >= 6 else f"{term}%"
                 rows = conn.execute(
                     "SELECT ubigeo, departamento FROM ubigeo_reniec WHERE departamento_norm LIKE ? LIMIT 2000",
-                    (f"%{term}%",),
+                    (like_sub,),
                 ).fetchall()
                 if rows:
                     return str(rows[0]["departamento"]).lower(), [str(r["ubigeo"]) for r in rows]
                 rows = conn.execute(
                     "SELECT ubigeo, provincia FROM ubigeo_reniec WHERE provincia_norm LIKE ? LIMIT 2000",
-                    (f"%{term}%",),
+                    (like_sub,),
                 ).fetchall()
                 if rows:
                     return str(rows[0]["provincia"]).lower(), [str(r["ubigeo"]) for r in rows]
                 rows = conn.execute(
                     "SELECT ubigeo, distrito FROM ubigeo_reniec WHERE distrito_norm LIKE ? LIMIT 500",
-                    (f"%{term}%",),
+                    (like_sub,),
                 ).fetchall()
                 if rows:
                     return str(rows[0]["distrito"]).lower(), [str(r["ubigeo"]) for r in rows]
@@ -1483,9 +1486,17 @@ class DataStore:
                 return result
 
             # 2. Fallback: probar tokens individuales (≥4 chars), más largos primero
-            _STOPWORDS = {"dame", "de", "del", "el", "en", "es", "la", "las", "los",
-                          "mesas", "para", "que", "quienes", "resumen", "son", "top",
-                          "fueron", "hay", "quien", "gano", "cuantas", "cuanto"}
+            _STOPWORDS = {
+                # artículos, preposiciones, conjunciones
+                "dame", "de", "del", "el", "en", "es", "la", "las", "los",
+                "para", "que", "quienes", "son", "hay", "quien", "una", "uno",
+                # verbos y sustantivos electorales comunes
+                "mesas", "resumen", "top", "fueron", "gano", "cuantas", "cuanto",
+                "saco", "votos", "voto", "nivel", "total", "suma", "dato", "gana",
+                "vote", "nacional", "ganador", "ganaron", "obtuvo",
+                "cuantos", "cuanta", "tiene", "tuvo", "habia", "hubo",
+                "cual", "como", "donde", "cuando", "cada", "hubo",
+            }
             tokens = sorted(
                 [t for t in q_norm.split() if len(t) >= 4 and t not in _STOPWORDS],
                 key=len,
