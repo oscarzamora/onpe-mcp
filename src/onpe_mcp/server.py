@@ -118,9 +118,9 @@ _CANDIDATE_VOTE_PATTERNS = [
         r"^([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{2,40}?)\s+en\s+\w",
         re.IGNORECASE,
     ),
-    # "NAME PLACE votos" — bare 3-token candidate+geo pattern ("acuna piura votos")
+    # "NAME PLACE votos/resultados/porcentaje" — bare 3-token candidate+geo pattern
     re.compile(
-        r"^([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,30}?)\s+[A-Za-záéíóúñÁÉÍÓÚÑ]{3,}\s+votos?$",
+        r"^([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,30}?)\s+[A-Za-záéíóúñÁÉÍÓÚÑ]{3,}\s+(?:votos?|resultados?|porcentaje|datos?)$",
         re.IGNORECASE,
     ),
 ]
@@ -159,6 +159,9 @@ _NON_CANDIDATE_EXPRESSIONS: frozenset[str] = frozenset({
     # Frases nacionales que pueden capturar el patrón bare "X en GEO"
     "mas votados", "los mas votados", "votados", "mas votos",
     "los que mas votos", "el mas votado",
+    # Tipos de votos que NO son candidatos
+    "nulos", "blancos", "viciados", "impugnados",
+    "votos nulos", "votos blancos", "votos viciados",
 })
 
 # Patrón para detectar consultas multi-candidato: "X y Y" o "X e Y"
@@ -170,6 +173,7 @@ _MULTI_CANDIDATE_PATTERN = re.compile(
     r"|\b(.+?)\s+versus\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\bdiferencia\s+(?:de\s+votos?\s+)?entre\s+(.+?)\s+y\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\b(.+?)\s+frente\s+a\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
+    r"|\b(.+?)\s+contra\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\b(.+?)\s+o\s+(.+?)\s+(?:quien|cu[aá]l|cu[aá]ntos?)\s+(?:sac[oó]|tuvo|obtuvo|tiene|tiene\s+m[aá]s)",
     re.IGNORECASE,
 )
@@ -1355,7 +1359,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         if _candidate_from_pattern_early and re.search(r"\s+(?:y|e)\s+", _candidate_from_pattern_early, re.IGNORECASE):
             _parts = re.split(r"\s+(?:y|e)\s+", _candidate_from_pattern_early, flags=re.IGNORECASE)
             _multi_candidates = [p.strip() for p in _parts if p.strip()]
-        elif _candidate_from_pattern_early and re.search(r"\s+(?:versus|vs\.?|con|comparado\s+con|frente\s+a)\s+", _candidate_from_pattern_early, re.IGNORECASE):
+        elif _candidate_from_pattern_early and re.search(r"\s+(?:versus|vs\.?|con|comparado\s+con|frente\s+a|contra)\s+", _candidate_from_pattern_early, re.IGNORECASE):
             _mc_m2 = _MULTI_CANDIDATE_PATTERN.search(q)
             if _mc_m2:
                 _mc_groups2 = [g.strip() for g in _mc_m2.groups() if g and g.strip()]
@@ -1363,8 +1367,8 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                     _multi_candidates = _mc_groups2[:2]
                     _candidate_from_pattern_early = None
             if not _multi_candidates:
-                # Fallback: split by versus/vs/comparado con/frente a
-                _parts2 = re.split(r"\s+(?:versus|vs\.?|comparado\s+con|frente\s+a)\s+", _candidate_from_pattern_early, flags=re.IGNORECASE)
+                # Fallback: split by versus/vs/comparado con/frente a/contra
+                _parts2 = re.split(r"\s+(?:versus|vs\.?|comparado\s+con|frente\s+a|contra)\s+", _candidate_from_pattern_early, flags=re.IGNORECASE)
                 if len(_parts2) >= 2:
                     _multi_candidates = [p.strip() for p in _parts2 if p.strip()]
                     _candidate_from_pattern_early = None
@@ -1568,10 +1572,11 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "candidatos con mas votos", "candidatos mas votados",
             "mas votados", "los mas votados",
             "podio electoral", "podio", "lideres electorales",
+            "ranking nacional", "ranking en peru",
         }
         _is_national = any(p in q_norm for p in _NATIONAL_PHRASES)
         if not _is_national and re.search(r"\b(top|primeros?\s+\d+)\b", q_norm) and (
-            "nacional" in q_norm or "pais" in q_norm
+            "nacional" in q_norm or "pais" in q_norm or "peru" in q_norm
         ):
             _is_national = True
         if not _is_national and re.search(r"\bm[aá]s\s+votos\b", q_norm) and "candidatos" in q_norm:
