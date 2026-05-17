@@ -841,6 +841,13 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             r"\btop\s+" + re.escape(mesa_match.group(1)) + r"\b", q, re.IGNORECASE
         ):
             mesa_match = None
+        # Evitar que cantidades tipo "50000 votos" o "mas de 100000" se traten como mesa
+        if mesa_match and "mesa" not in _norm(q):
+            _mstart, _mend = mesa_match.start(1), mesa_match.end(1)
+            _before = q[max(0, _mstart - 5):_mstart].lower()
+            _after = q[_mend:_mend + 7].lower()
+            if _after.lstrip().startswith("voto") or re.search(r"\bde\s*$", _before):
+                mesa_match = None
         # Normalizar puntuación especial para mejorar pattern matching
         q = re.sub(r"[¿¡:;?!]", " ", q)
         q = re.sub(r"\s{2,}", " ", q).strip()
@@ -855,7 +862,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         top_n = extract_top_n(q, default=5, minimum=1, maximum=20)
 
         # Intención 0: legislativo (diputados/senadores/escaños/congresistas) más votado por distrito
-        if "diputad" in q_norm or "senador" in q_norm or "esca" in q_norm or "congresista" in q_norm:
+        if "diputad" in q_norm or "senador" in q_norm or re.search(r"\besca[nñ]os?\b", q_norm) or "congresista" in q_norm:
             cargo = "senadores" if ("senador" in q_norm or ("esca" in q_norm and "senador" in q_norm)) else "diputados"
             if "senador" in q_norm:
                 cargo = "senadores"
@@ -1451,6 +1458,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                         _cfe_n not in _NON_CANDIDATE_EXPRESSIONS
                         and not _cfe_n.startswith("en ")
                         and not _cfe_n.startswith("a nivel")
+                        and not re.match(r"(?:para|hacia|desde|del?)\s", _cfe_n)
                         and len(_cfe_n.strip()) >= 3
                         and not (_cfe_w & _NON_CANDIDATE_EXPRESSIONS)
                     ):
@@ -1702,9 +1710,9 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "resumen de elecciones", "resumen electoral", "reporte electoral",
         }
         _is_national = any(p in q_norm for p in _NATIONAL_PHRASES)
-        # Guard: "en/de" seguido de un nombre (no artículo/colectivo) → contexto geo → no nacional
+        # Guard: "en/de" seguido de un nombre real (no artículo/colectivo/número) → hay contexto geo
         _GEO_IN_Q = re.search(
-            r"\b(?:en|de)\s+(?!(?:el|la|los|las|un|una|lo|este|ese|todos?|todas?|cada|alguno?|ninguno?|cualquier|la\s+eleccion)\b)\w",
+            r"\b(?:en|de)\s+(?!\d)(?!(?:el|la|los|las|un|una|lo|este|ese|todos?|todas?|cada|alguno?|ninguno?|cualquier|la\s+eleccion)\b)\w",
             q_norm
         )
         if not _is_national and re.search(r"\b(top\s*\d*|\d+\s+primeros?|primeros?\s+\d+)\b", q_norm) and (
@@ -1727,8 +1735,8 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         # "primera vuelta" / "segunda vuelta" sin geo explícita → nacional
         if not _is_national and re.search(r"\b(?:primera|segunda)\s+vuelta\b", q_norm) and not _GEO_IN_Q:
             _is_national = True
-        # "quienes ganaron" sin geo → nacional; con "en PLACE" → geo_domestic
-        if not _is_national and re.search(r"\bquienes?\s+(?:son\s+(?:los\s+)?)?(?:gan[ao]ron?|lider(?:es)?)\b", q_norm):
+        # "quienes ganaron/superaron/consiguieron" sin geo → nacional; con "en PLACE" → geo_domestic
+        if not _is_national and re.search(r"\bquienes?\s+(?:son\s+(?:los\s+)?)?(?:gan[ao]ron?|lider(?:es)?|superaron|consiguieron|obtuvieron|tuvieron)\b", q_norm):
             if not _GEO_IN_Q:
                 _is_national = True
 
