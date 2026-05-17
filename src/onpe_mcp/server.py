@@ -259,6 +259,7 @@ _MULTI_CANDIDATE_PATTERN = re.compile(
     r"|\b(.+?)\s+frente\s+a\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\b(.+?)\s+contra\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\b(.+?)\s+o\s+(.+?)\s+(?:quien|cu[aá]l|cu[aá]ntos?)\s+(?:sac[oó]|tuvo|obtuvo|tiene|tiene\s+m[aá]s|gan[oó]|logr[oó])"
+    r"|\bgan[oó]\s+(.+?)\s+o\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\bquien\s+(?:sac[oó]|tuvo|obtuvo|tiene)\s+m[aá]s\s+(.+?)\s+o\s+(.+?)(?:\?|$)"
     r"|\b(.+?)\s+cu[aá]ntos?\s+votos?\s+(?:y|e)\s+(.+?)\s+cu[aá]ntos?\s+votos?"
     r"|\b(?:si\s+)?(.+?)\s+(?:le\s+)?gan[oó]\s+(?:a|contra)\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
@@ -266,6 +267,7 @@ _MULTI_CANDIDATE_PATTERN = re.compile(
     r"|\b(.+?)\s+(?:tuvo|sac[oó]|obtuvo)\s+m[aá]s\s+votos?\s+que\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\bcu[aá]ntos?\s+m[aá]s\s+votos?\s+(?:tuvo|sac[oó]|obtuvo|tiene|lleva)\s+(.+?)\s+que\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\bcu[aá]nto\s+m[aá]s\s+(?:sac[oó]|tuvo|obtuvo|lleva|tiene)\s+(.+?)\s+que\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
+    r"|\bcompar[ae]\s+(.+?)\s+con\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\b(.+?)\s+m[aá]s\s+que\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$",
     re.IGNORECASE,
 )
@@ -1916,6 +1918,9 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             # regiones naturales (sin geo específico)
             "sierra peruana", "selva peruana", "costa peruana",
             "en la sierra", "en la selva", "en la costa",
+            # estado del conteo
+            "faltan por contar", "falta por contar", "por contabilizar",
+            "estado del conteo", "avance del conteo", "actas procesadas",
         }
         _is_national = any(p in q_norm for p in _NATIONAL_PHRASES)
         # Departamentos peruanos conocidos — para detectar geo sin preposición ("elecciones 2026 Arequipa")
