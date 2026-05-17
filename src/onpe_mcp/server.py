@@ -994,7 +994,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
 
         # Historical/biographical queries → unknown
         # Preguntas geográficas administrativas (no electorales): "cuántos departamentos tiene el peru"
-        if re.search(r"\bcu[aá]ntos?\s+(?:departamentos?|provincias?|distritos?|municipios?|regiones?|ciudades?)\s+(?:tiene|hay|existen?|son)\b", _q_norm_guard) and not any(kw in _q_norm_guard for kw in ("voto", "votos", "eleccion", "candidato", "mesa", "resultado")):
+        if re.search(r"\bcu[aá]ntos?\s+(?:departamentos?|provincias?|distritos?|municipios?|regiones?|ciudades?|hospitales?|cl[ií]nicas?|escuelas?|colegios?|universidades?|centros?\s+(?:de\s+salud|comerciales?|educativos?)|postas?|farmacias?|parques?|museos?|iglesias?|cementerios?)\s+(?:tiene|hay|existen?|son)\b", _q_norm_guard) and not any(kw in _q_norm_guard for kw in ("voto", "votos", "eleccion", "candidato", "mesa", "resultado")):
             return ok_response(
                 {
                     "intent": "unknown",
@@ -1584,6 +1584,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             or re.search(r"\bdesde\s+(?:la\s+)?mes[a]+s?\s+(\d{4,6})\s+hasta\s+\d{4,6}\b", q_norm)
             or re.search(r"\bdesde\s+(?:el\s+|la\s+)?(\d{4,6})\s+(?:hasta|al)\s+(?:el\s+|la\s+)?\d{4,6}\b", q_norm)
             or re.search(r"\b(\d{4,6})\s+hasta\s+\d{4,6}\b", q_norm)
+            or re.search(r"\b(\d{4,6})-\d{4,6}\b", q_norm)  # hyphen range: 700001-700010
         )
         # Treat queries with explicit numeric range as if they have "mesa" context
         if not _has_mesa and _numeric_range_m and mesa_match:
@@ -2242,7 +2243,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         # Guard: "en/de" (+ artículo opcional) seguido de un nombre real → hay contexto geo
         # Se excluyen palabras del dominio electoral que nunca son lugares.
         _GEO_IN_Q = re.search(
-            r"\b(?:en|de)\s+(?:(?:el|la|los|las)\s+)?(?!\d)"
+            r"\b(?:en|de|para)\s+(?:(?:el|la|los|las)\s+)?(?!\d)"
             r"(?!(?:el|la|los|las|un|una|unos|unas"
             r"|este|esta|esto|estos|estas|ese|esa|eso|esos|esas|aquel|aqui|ahi|alla"
             r"|todos?|todas?|cada|alguno?|ninguno?|cualquier|la\s+eleccion|candidatos?"
