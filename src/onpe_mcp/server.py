@@ -175,7 +175,9 @@ _NON_CANDIDATE_EXPRESSIONS: frozenset[str] = frozenset({
     # Palabras electorales que NO son nombres de candidato
     "elecciones", "eleccion", "comicios", "sufragio",
     "congreso", "asamblea", "parlamento",
-    # Colectivos y grupos que no son candidatos
+    # Palabras geográficas que no son nombres de candidato
+    "region", "departamento", "provincia", "distrito", "localidad", "municipio",
+    "municipalidad",
     "diaspora", "inmigrantes", "migrantes", "comunidad", "compatriotas",
     # Pronombres y verbos coloquiales que no son nombres de candidato
     "me", "te", "le", "se", "nos", "oye", "cuanto", "cuantos", "cual", "cuales",
@@ -193,7 +195,8 @@ _MULTI_CANDIDATE_PATTERN = re.compile(
     r"|\b(.+?)\s+frente\s+a\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\b(.+?)\s+contra\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\b(.+?)\s+o\s+(.+?)\s+(?:quien|cu[aá]l|cu[aá]ntos?)\s+(?:sac[oó]|tuvo|obtuvo|tiene|tiene\s+m[aá]s)"
-    r"|\bquien\s+(?:sac[oó]|tuvo|obtuvo|tiene)\s+m[aá]s\s+(.+?)\s+o\s+(.+?)(?:\?|$)",
+    r"|\bquien\s+(?:sac[oó]|tuvo|obtuvo|tiene)\s+m[aá]s\s+(.+?)\s+o\s+(.+?)(?:\?|$)"
+    r"|\b(.+?)\s+cu[aá]ntos?\s+votos?\s+(?:y|e)\s+(.+?)\s+cu[aá]ntos?\s+votos?",
     re.IGNORECASE,
 )
 
@@ -778,6 +781,9 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             r"\btop\s+" + re.escape(mesa_match.group(1)) + r"\b", q, re.IGNORECASE
         ):
             mesa_match = None
+        # Normalizar puntuación especial para mejorar pattern matching
+        q = re.sub(r"[¿¡:;]", " ", q)
+        q = re.sub(r"\s{2,}", " ", q).strip()
         q_norm = _norm(q)
         top_n = extract_top_n(q, default=5, minimum=1, maximum=20)
 
@@ -1410,13 +1416,15 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                 _mc_groups = [g.strip() for g in _mc_m.groups() if g and g.strip()]
                 if len(_mc_groups) >= 2:
                     _multi_candidates = _mc_groups[:2]
-        elif _candidate_from_pattern_early and re.search(r"\s+con\s+", _candidate_from_pattern_early, re.IGNORECASE):
-            # "comparar a X con Y" — el patrón bare capturó toda la expr antes de "en"
-            _mc_m2 = _MULTI_CANDIDATE_PATTERN.search(q)
-            if _mc_m2:
-                _mc_groups2 = [g.strip() for g in _mc_m2.groups() if g and g.strip()]
-                if len(_mc_groups2) >= 2:
-                    _multi_candidates = _mc_groups2[:2]
+        else:
+            # _candidate_from_pattern_early está fijo pero puede haber multi-cand
+            # en el query original (e.g. "Keiko cuantos votos y Aliaga cuantos votos",
+            # "comparar a X con Y")
+            _mc_m_fallback = _MULTI_CANDIDATE_PATTERN.search(q)
+            if _mc_m_fallback:
+                _mc_gfb = [g.strip() for g in _mc_m_fallback.groups() if g and g.strip()]
+                if len(_mc_gfb) >= 2:
+                    _multi_candidates = _mc_gfb[:2]
                     _candidate_from_pattern_early = None
         # Strip trailing "en PLACE" and leading stop-words from candidate names
         # e.g. "Keiko en Arequipa" → "Keiko", "votos Nieto" → "Nieto"
@@ -1611,6 +1619,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "todos los resultados", "ver todos los resultados",
             "todos los candidatos",
             "ganadores de", "ganadores en la", "quienes ganaron",
+            "total de votos", "total votos", "votos por candidato",
         }
         _is_national = any(p in q_norm for p in _NATIONAL_PHRASES)
         if not _is_national and re.search(r"\b(top\s*\d*|\d+\s+primeros?|primeros?\s+\d+)\b", q_norm) and (
@@ -1627,8 +1636,8 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         if not _is_national and "todos" in q_norm and not re.search(r"\ben\s+\w", q_norm):
             if "candidatos" in q_norm or "resultados" in q_norm or "votos" in q_norm:
                 _is_national = True
-        # "candidatos" sin geo → nacional (ej: "cuántos candidatos se presentaron")
-        if not _is_national and "candidatos" in q_norm and not re.search(r"\ben\s+\w", q_norm):
+        # "candidatos/candidato" sin geo → nacional (ej: "cuántos candidatos se presentaron")
+        if not _is_national and re.search(r"\bcandidatos?\b", q_norm) and not re.search(r"\ben\s+\w", q_norm):
             _is_national = True
         # "primera vuelta" / "segunda vuelta" sin geo explícita → nacional
         if not _is_national and re.search(r"\b(?:primera|segunda)\s+vuelta\b", q_norm) and not re.search(r"\ben\s+\w", q_norm):
