@@ -123,6 +123,11 @@ _CANDIDATE_VOTE_PATTERNS = [
         r"^([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,30}?)\s+[A-Za-záéíóúñÁÉÍÓÚÑ]{3,}\s+(?:votos?|resultados?|porcentaje|datos?)\b",
         re.IGNORECASE,
     ),
+    # "NAME votos en GEO" — candidate name before "votos en"
+    re.compile(
+        r"^([A-Za-záéíóúñÁÉÍÓÚÑ]+(?:\s+[A-Za-záéíóúñÁÉÍÓÚÑ]+){0,2})\s+votos?\s+en\s+\w",
+        re.IGNORECASE,
+    ),
 ]
 
 # Aliases culturales/coloquiales para candidatos.
@@ -167,6 +172,9 @@ _NON_CANDIDATE_EXPRESSIONS: frozenset[str] = frozenset({
     "congreso", "asamblea", "parlamento",
     # Colectivos y grupos que no son candidatos
     "diaspora", "inmigrantes", "migrantes", "comunidad", "compatriotas",
+    # Pronombres y verbos coloquiales que no son nombres de candidato
+    "me", "te", "le", "se", "nos", "oye", "cuanto", "cuantos", "cual", "cuales",
+    "puedes", "puede", "puedo", "podria", "dime", "sabes", "sabe", "entiendo",
 })
 
 # Patrón para detectar consultas multi-candidato: "X y Y" o "X e Y"
@@ -701,6 +709,21 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         q = str(query or "").strip()
         if not q:
             raise ValueError("query no puede estar vacía")
+
+        # ── Guard: saludos y queries muy cortas ─────────────────────────────
+        _GREETINGS = {"hola", "hi", "hey", "buenas", "ola", "hello", "saludos", "que tal"}
+        if q.lower().strip("¿?!.,") in _GREETINGS or len(q) < 4:
+            return ok_response(
+                {
+                    "intent": "unknown",
+                    "answer": (
+                        "¡Hola! Puedo responder consultas sobre los resultados electorales del Perú 2026. "
+                        "Por ejemplo: *'¿cuántos votos obtuvo López Aliaga en Lima?'* "
+                        "o *'top 5 en Arequipa'* o *'senadores para Puno'*."
+                    ),
+                },
+                started_ms=started_ms,
+            )
 
         # ── Guard: DB no hidratada ──────────────────────────────────────────
         try:
@@ -1343,21 +1366,19 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             for _vp in _CANDIDATE_VOTE_PATTERNS:
                 _vm = _vp.search(q)
                 if _vm:
-                    _candidate_from_pattern_early = _vm.group(1).strip()
-                    break
-
-        # Filtrar expresiones que no son nombres de candidato
-        if _candidate_from_pattern_early:
-            _cfe_norm = _norm(_candidate_from_pattern_early)
-            _cfe_words = set(_cfe_norm.split())
-            if (
-                _cfe_norm in _NON_CANDIDATE_EXPRESSIONS
-                or _cfe_norm.startswith("en ")
-                or _cfe_norm.startswith("a nivel")
-                or len(_cfe_norm.strip()) < 3
-                or _cfe_words & _NON_CANDIDATE_EXPRESSIONS  # alguna palabra es stop-word
-            ):
-                _candidate_from_pattern_early = None
+                    _cfe_cand = _vm.group(1).strip()
+                    _cfe_n = _norm(_cfe_cand)
+                    _cfe_w = set(_cfe_n.split())
+                    if (
+                        _cfe_n not in _NON_CANDIDATE_EXPRESSIONS
+                        and not _cfe_n.startswith("en ")
+                        and not _cfe_n.startswith("a nivel")
+                        and len(_cfe_n.strip()) >= 3
+                        and not (_cfe_w & _NON_CANDIDATE_EXPRESSIONS)
+                    ):
+                        _candidate_from_pattern_early = _cfe_cand
+                        break
+                    # else: match inválido, continuar al siguiente patrón
 
         # ── Multi-candidato: "Aliaga y Fujimori cuántos votos" ───────────────
         # Detectar cuando la expresión candidato contiene " y " separando dos candidatos.
@@ -1595,10 +1616,13 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         # "dame el top 5" / "top 3" sin contexto geográfico → nacional
         if not _is_national and re.search(r"\btop\s+\d+\b", q_norm) and not re.search(r"\ben\s+\w", q_norm):
             _is_national = True
-        # "todos" + "candidatos" / "todos" + "resultados" sin geo → nacional
+        # "todos" + (candidatos|resultados|votos) sin geo → nacional
         if not _is_national and "todos" in q_norm and not re.search(r"\ben\s+\w", q_norm):
-            if "candidatos" in q_norm or "resultados" in q_norm:
+            if "candidatos" in q_norm or "resultados" in q_norm or "votos" in q_norm:
                 _is_national = True
+        # "candidatos" sin geo → nacional (ej: "cuántos candidatos se presentaron")
+        if not _is_national and "candidatos" in q_norm and not re.search(r"\ben\s+\w", q_norm):
+            _is_national = True
 
         if _is_national:
             _nat_aggs = store.aggregate_votes_by_party()
