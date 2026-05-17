@@ -67,14 +67,16 @@ _CANDIDATE_VOTE_PATTERNS = [
     # incluye plural "sacaron/tuvieron/obtuvieron" para multi-candidato
     # acepta "en total", "fue que" intercalados: "cuántos votos fue que obtuvo X"
     # acepta typos b/v frecuentes en español peruano: tubo/obtubo/obtubieron
+    # acepta "había/habría obtenido" (pluscuamperfecto / condicional compuesto)
     re.compile(
-        r"\bcu[aá]ntos?\s+votos?\s+(?:en\s+total\s+|fue\s+que\s+|se\s+|hab[ií]a\s+)?(?:tuvo|tuvieron|tubo|tubieron|sac[oó]|sacaron|tiene|tienen|obtuvo|obtuvieron|obtubo|obtubieron|gan[oó]|ganaron|logr[oó]|lograron|consigui[oó]|consiguieron|recibi[oó]|recibieron|junt[oó]|juntaron|lleva|llevan|lleba|lleban|llev[oó]|llevaron|acumula|acumulan|acumul[oó]|sum[oó]|sumaron|lleg[oó]|llegaron|alcanz[oó]|alcanzaron|adjudic[oó]|capt[oó]|captaron|hizo|hicieron|reuni[oó]|reunieron|obtenido|logrado|conseguido|sacado|ganado|recibido|juntado|alcanzado|captado)\s+(.+?)(?:\s+(?:en|a\s+nivel|para)\b.*)?$",
+        r"\bcu[aá]ntos?\s+votos?\s+(?:en\s+total\s+|fue\s+que\s+|se\s+|habr?[ií]a\s+|hab[ií]a\s+)?(?:tuvo|tuvieron|tubo|tubieron|sac[oó]|sacaron|tiene|tienen|obtuvo|obtuvieron|obtubo|obtubieron|gan[oó]|ganaron|logr[oó]|lograron|consigui[oó]|consiguieron|recibi[oó]|recibieron|junt[oó]|juntaron|lleva|llevan|lleba|lleban|llev[oó]|llevaron|acumula|acumulan|acumul[oó]|sum[oó]|sumaron|lleg[oó]|llegaron|alcanz[oó]|alcanzaron|adjudic[oó]|capt[oó]|captaron|hizo|hicieron|reuni[oó]|reunieron|obtenido|logrado|conseguido|sacado|ganado|recibido|juntado|alcanzado|captado)\s+(.+?)(?:\s+(?:en|a\s+nivel|para)\b.*)?$",
         re.IGNORECASE,
     ),
     # "cuánto sacó/obtuvo X" / "que porcentaje obtuvo X" — también plural "cuántos"
     # acepta palabras intermedias: "cuanto porcentaje saco X", "cuantos puntos tuvo X"
+    # acepta "habia/habria sacado" (pluscuamperfecto / condicional)
     re.compile(
-        r"\b(?:cu[aá]ntos?\s+(?:\w+\s+)?|qu[eé]\s+(?:porcentaje|puntaje|puntos?|lugar|posici[oó]n)\s+(?:de\s+votos?\s+)?)(?:sac[oó]|obtuvo|logr[oó]|llev[oó]|anot[oó]|junt[oó]|consigui[oó]|recibi[oó]|tiene|tuvo|lleg[oó])\s+(.+?)(?:\s+(?:en|a\s+nivel|total|en\s+total)\b.*)?$",
+        r"\b(?:cu[aá]ntos?\s+(?:habr?[ií]a\s+|hab[ií]a\s+)?(?:\w+\s+)?|qu[eé]\s+(?:porcentaje|puntaje|puntos?|lugar|posici[oó]n)\s+(?:de\s+votos?\s+)?)(?:sac[oó]|sacado|obtuvo|obtenido|logr[oó]|logrado|llev[oó]|llevado|anot[oó]|junt[oó]|juntado|consigui[oó]|conseguido|recibi[oó]|recibido|tiene|tuvo|lleg[oó]|llegado|alcanz[oó]|alcanzado)\s+(.+?)(?:\s+(?:en|a\s+nivel|total|en\s+total)\b.*)?$",
         re.IGNORECASE,
     ),
     # "votos de X" / "votos totales de X" / "número de votos de X"
@@ -104,6 +106,16 @@ _CANDIDATE_VOTE_PATTERNS = [
     # "que tanto apoyo/respaldo tuvo/logró X"
     re.compile(
         r"\bqu[eé]\s+tanto\s+(?:apoyo|respaldo|votos?|porcentaje|aceptacion)\s+(?:tuvo|obtuvo|logr[oó]|recibi[oó]|sac[oó]|alcanz[oó])\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$",
+        re.IGNORECASE,
+    ),
+    # "que tanto voto/votaron por/la gente por NAME" — coloquial sin "cuantos votos"
+    re.compile(
+        r"\b(?:cu[aá]nto|qu[eé]\s+tanto)\s+vot[oó](?:\s+\w+){0,4}\s+(?:por|a\s+favor\s+de)\s+([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,35}?)(?:\s*[.,?!]|$)",
+        re.IGNORECASE,
+    ),
+    # "voto[ron] por NAME" / "votaron a favor de NAME"
+    re.compile(
+        r"\bvotaron?\s+(?:por|a\s+favor\s+de)\s+([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,35}?)(?:\s+(?:en|a\s+nivel)\b.*)?$",
         re.IGNORECASE,
     ),
     # "resultados de X" / "resultados nacionales de X" / "puntaje de X" / "resultados del X" / "resultados para X"
@@ -937,6 +949,23 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                     "answer": (
                         "Esa pregunta parece ser biográfica o histórica, fuera del alcance electoral. "
                         "Puedo responder sobre votos, resultados o candidatos en las elecciones peruanas 2026."
+                    ),
+                },
+                started_ms=started_ms,
+            )
+
+        # Detectar preguntas de hora / tiempo de reloj → unknown
+        if re.search(
+            r"\bqu[eé]\s+hora\b|\bdime\s+la\s+hora\b|\bcu[aá]l\s+es\s+la\s+hora\b"
+            r"|\bqu[eé]\s+hora\s+es\b|\ba\s+qu[eé]\s+hora\b",
+            _q_norm_guard,
+        ) and not any(kw in _q_norm_guard for kw in ("voto", "votos", "eleccion", "mesa")):
+            return ok_response(
+                {
+                    "intent": "unknown",
+                    "answer": (
+                        "Esa pregunta no está relacionada con resultados electorales. "
+                        "Puedo ayudarte con votos, candidatos o resultados de las elecciones peruanas 2026."
                     ),
                 },
                 started_ms=started_ms,
@@ -2057,6 +2086,9 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "quien le gano a quien", "como quedo la votacion", "votacion nacional",
             "como quedo el conteo", "como quedo el resultado", "como van los resultados",
             "como quedaron las elecciones", "quien encabeza", "encabeza la votacion",
+            # Estado del conteo por distrito
+            "cuantos distritos", "distritos que votaron", "distritos contaron",
+            "cuantos centros de votacion", "cuantas mesas contaron",
         }
         _is_national = any(p in q_norm for p in _NATIONAL_PHRASES)
         # Departamentos peruanos conocidos — para detectar geo sin preposición ("elecciones 2026 Arequipa")
