@@ -65,10 +65,10 @@ _foreign_catalog_synced: bool = False
 _CANDIDATE_VOTE_PATTERNS = [
     # "cuántos votos sacó/tuvo/obtuvo/logró/consiguió/recibió/juntó X"
     # incluye plural "sacaron/tuvieron/obtuvieron" para multi-candidato
-    # acepta "en total" intercalado: "cuántos votos en total obtuvo X"
+    # acepta "en total", "fue que" intercalados: "cuántos votos fue que obtuvo X"
     # acepta typos b/v frecuentes en español peruano: tubo/obtubo/obtubieron
     re.compile(
-        r"\bcu[aá]ntos?\s+votos?\s+(?:en\s+total\s+)?(?:tuvo|tuvieron|tubo|tubieron|sac[oó]|sacaron|tiene|tienen|obtuvo|obtuvieron|obtubo|obtubieron|gan[oó]|ganaron|logr[oó]|lograron|consigui[oó]|consiguieron|recibi[oó]|recibieron|junt[oó]|juntaron)\s+(.+?)(?:\s+(?:en|a\s+nivel|para)\b.*)?$",
+        r"\bcu[aá]ntos?\s+votos?\s+(?:en\s+total\s+|fue\s+que\s+)?(?:tuvo|tuvieron|tubo|tubieron|sac[oó]|sacaron|tiene|tienen|obtuvo|obtuvieron|obtubo|obtubieron|gan[oó]|ganaron|logr[oó]|lograron|consigui[oó]|consiguieron|recibi[oó]|recibieron|junt[oó]|juntaron)\s+(.+?)(?:\s+(?:en|a\s+nivel|para)\b.*)?$",
         re.IGNORECASE,
     ),
     # "cuánto sacó/obtuvo/logró/llevó/anotó/juntó X" (sin "votos") — también plural "cuántos"
@@ -204,7 +204,8 @@ _NON_CANDIDATE_EXPRESSIONS: frozenset[str] = frozenset({
     "municipalidad",
     "diaspora", "inmigrantes", "migrantes", "comunidad", "compatriotas",
     # Pronombres y verbos coloquiales que no son nombres de candidato
-    "me", "oye", "cuanto", "cuantos", "cual", "cuales",
+    "me", "oye", "cuanto", "cuantos", "cuanta", "cuantas", "cual", "cuales",
+    "gente", "pueblo", "poblacion",  # colectivos que no son candidatos
     "puedes", "puede", "puedo", "podria", "dime", "sabes", "sabe", "entiendo",
     "paso", "paso en",  # verbo "pasó" coloquial en preguntas geográficas
 })
@@ -1701,8 +1702,11 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "resumen de elecciones", "resumen electoral", "reporte electoral",
         }
         _is_national = any(p in q_norm for p in _NATIONAL_PHRASES)
-        # Guard: "en" seguido de un nombre (no artículo) → hay contexto geo → no nacional
-        _GEO_IN_Q = re.search(r"\ben\s+(?!(?:el|la|los|las|un|una|lo|este|ese)\b)\w", q_norm)
+        # Guard: "en/de" seguido de un nombre (no artículo/colectivo) → contexto geo → no nacional
+        _GEO_IN_Q = re.search(
+            r"\b(?:en|de)\s+(?!(?:el|la|los|las|un|una|lo|este|ese|todos?|todas?|cada|alguno?|ninguno?|cualquier|la\s+eleccion)\b)\w",
+            q_norm
+        )
         if not _is_national and re.search(r"\b(top\s*\d*|\d+\s+primeros?|primeros?\s+\d+)\b", q_norm) and (
             "nacional" in q_norm or "pais" in q_norm or "peru" in q_norm
             or ("candidatos" in q_norm and not _GEO_IN_Q)
@@ -1713,9 +1717,9 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         # "dame el top 5" / "top 3" sin contexto geográfico → nacional
         if not _is_national and re.search(r"\btop\s+\d+\b", q_norm) and not _GEO_IN_Q:
             _is_national = True
-        # "todos" + (candidatos|resultados|votos) sin geo → nacional
-        if not _is_national and "todos" in q_norm and not re.search(r"\b(?:en|de)\s+\w", q_norm):
-            if "candidatos" in q_norm or "resultados" in q_norm or "votos" in q_norm:
+        # "todos/todas" + (candidatos|resultados|votos|regiones) sin geo específico → nacional
+        if not _is_national and ("todos" in q_norm or "todas" in q_norm) and not _GEO_IN_Q:
+            if "candidatos" in q_norm or "resultados" in q_norm or "votos" in q_norm or "regiones" in q_norm or "provincias" in q_norm or "pais" in q_norm:
                 _is_national = True
         # "candidatos/candidato" sin geo → nacional (ej: "cuántos candidatos se presentaron")
         if not _is_national and re.search(r"\bcandidatos?\b", q_norm) and not _GEO_IN_Q:
