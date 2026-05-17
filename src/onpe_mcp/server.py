@@ -68,7 +68,7 @@ _CANDIDATE_VOTE_PATTERNS = [
     # acepta "en total", "fue que" intercalados: "cuántos votos fue que obtuvo X"
     # acepta typos b/v frecuentes en español peruano: tubo/obtubo/obtubieron
     re.compile(
-        r"\bcu[aá]ntos?\s+votos?\s+(?:en\s+total\s+|fue\s+que\s+|se\s+)?(?:tuvo|tuvieron|tubo|tubieron|sac[oó]|sacaron|tiene|tienen|obtuvo|obtuvieron|obtubo|obtubieron|gan[oó]|ganaron|logr[oó]|lograron|consigui[oó]|consiguieron|recibi[oó]|recibieron|junt[oó]|juntaron|lleva|llevan|lleba|lleban|llev[oó]|llevaron|acumula|acumulan|sum[oó]|sumaron|lleg[oó]|llegaron)\s+(.+?)(?:\s+(?:en|a\s+nivel|para)\b.*)?$",
+        r"\bcu[aá]ntos?\s+votos?\s+(?:en\s+total\s+|fue\s+que\s+|se\s+)?(?:tuvo|tuvieron|tubo|tubieron|sac[oó]|sacaron|tiene|tienen|obtuvo|obtuvieron|obtubo|obtubieron|gan[oó]|ganaron|logr[oó]|lograron|consigui[oó]|consiguieron|recibi[oó]|recibieron|junt[oó]|juntaron|lleva|llevan|lleba|lleban|llev[oó]|llevaron|acumula|acumulan|acumul[oó]|sum[oó]|sumaron|lleg[oó]|llegaron|alcanz[oó]|alcanzaron|adjudic[oó])\s+(.+?)(?:\s+(?:en|a\s+nivel|para)\b.*)?$",
         re.IGNORECASE,
     ),
     # "cuánto sacó/obtuvo X" / "que porcentaje obtuvo X" — también plural "cuántos"
@@ -915,6 +915,19 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                 started_ms=started_ms,
             )
 
+        # Detectar preguntas de edad / características personales → unknown
+        if re.search(r"\bcu[aá]ntos?\s+a[nñ]os?\s+(?:tiene|tendr[aá]|ha|cumple|cumpli[oó])\b", _q_norm_guard):
+            return ok_response(
+                {
+                    "intent": "unknown",
+                    "answer": (
+                        "Esa parece ser una pregunta personal/biográfica. "
+                        "Solo puedo responder sobre resultados electorales peruanos 2026."
+                    ),
+                },
+                started_ms=started_ms,
+            )
+
         # Detectar años electorales pasados / futuros → unknown
         _year_m = re.search(r"\b(20\d{2})\b", _q_norm_guard)
         if _year_m and _year_m.group(1) != "2026":
@@ -1024,7 +1037,8 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         # Intención 0: legislativo (diputados/senadores/escaños/congresistas) más votado por distrito
         if ("diputad" in q_norm or "senador" in q_norm or "congresista" in q_norm
                 or re.search(r"\besca[nñ]os?\b", q_norm)
-                or re.search(r"\brepresentantes?\b", q_norm)):
+                or re.search(r"\brepresentantes?\b", q_norm)
+                or re.search(r"\bparlamentarios?\b", q_norm)):
             cargo = "senadores" if ("senador" in q_norm or ("esca" in q_norm and "senador" in q_norm)) else "diputados"
             if "senador" in q_norm:
                 cargo = "senadores"
@@ -1947,6 +1961,10 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             # margen y liderazgo
             "margen de victoria", "margen de diferencia", "distancia entre candidatos",
             "cuantos peruanos votaron", "peruanos que votaron", "peruanos votaron",
+            # porcentaje y ultimo
+            "porcentaje final", "ultimo porcentaje", "porcentaje definitivo",
+            "ultimos resultados", "ultimas noticias electorales", "resultados definitivos",
+            "resultados de anoche", "resultados de hoy",
         }
         _is_national = any(p in q_norm for p in _NATIONAL_PHRASES)
         # Departamentos peruanos conocidos — para detectar geo sin preposición ("elecciones 2026 Arequipa")
