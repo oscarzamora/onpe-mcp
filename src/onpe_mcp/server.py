@@ -410,11 +410,11 @@ _FILLER_START = re.compile(
     r"a\s+ver[,\s]+"
     r"|(?:me\s+)?(?:puedes?\s+)?(?:decir|dime|cuéntame|cuentame|mostrarme|muéstrame|mostrar|ver)[,\s]+"
     r"|(?:puedes?\s+)?(?:mostrarme|muéstrame|mostrar|ver)[,\s]+"
-    r"|(?:quiero|quisiera|necesito|podrias?\s+decirme|podrías?\s+decirme)\s+(?:saber\s+|ver\s+)?"
+    r"|(?:quiero|quisiera|necesito|podri[aá]s?\s+decirme|podr[íi]a[s]?\s+decirme)\s+(?:saber\s+|ver\s+)?"
     r"|(?:oye|oiga|escucha)[,\s]+"
     r"|(?:ponme|dame|muestrame|muéstrame|dime)[,\s]+"
     r"|(?:por\s+favor[,\s]+)?"
-    r"|(?:sabes?\s+(?:cuantos?|cu[aá]ntos?|como|cómo)\s+)?"
+    r"|(?:sabes?[,\s]+)?"
     r"|(?:dime\s+)?"
     r"|(?:(?:me\s+)?(?:puedes?|podr[íi]as?)\s+(?:decirme\s+|mostrarme?\s+|ver\s+)?)?"
     r")",
@@ -884,6 +884,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "mide", "pesa", "altura", "distancia", "longitud", "peso", "talla",
             "hotel", "hoteles", "restaurante", "turismo", "vuelos", "hospedaje",
             "ingles", "frances", "idioma", "traducir", "traduccion",
+            "plato", "comida", "gastronomia", "receta", "ingredientes",
         })
         # "tiempo" alone is ambiguous; only block if paired with weather words
         # "cuanto vale" = pricing query → non-electoral
@@ -1946,7 +1947,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "a nivel nacional", "todo el peru", "a nivel del peru",
             "nivel nacional", "todo peru", "en el peru", "resultados nacionales",
             "a nivel de peru", "peru entero", "todo el pais",
-            "quien gano las elecciones", "quien fue el ganador",
+            "quien gano las elecciones", "quien fue el ganador", "quien gano",
             "presidente electo", "quien es el presidente",
             "ganador de las elecciones", "ganador de la eleccion",
             "top candidatos", "top de candidatos",
@@ -2006,6 +2007,9 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             # mapa y informe
             "mapa electoral", "informe electoral", "informe de resultados",
             "informe de resultados electorales", "reporte final de resultados",
+            # conteo en tiempo real
+            "quien esta arriba", "quien va arriba", "quien lidera el conteo",
+            "arriba en el conteo", "lidera el conteo", "va ganando",
         }
         _is_national = any(p in q_norm for p in _NATIONAL_PHRASES)
         # Departamentos peruanos conocidos — para detectar geo sin preposición ("elecciones 2026 Arequipa")
@@ -2484,7 +2488,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             store.append_raw_event("onpe_chat_candidate", {"query": q, "partido_id": chosen["partido_id"]})
             return ok_response(data, started_ms=started_ms)
 
-        _MESA_CONTEXT_WORDS = {"mesa", "acta", "local", "votacion", "sufragio", "urna", "codigo", "dame", "ver", "consulta", "busca"}
+        _MESA_CONTEXT_WORDS = {"mesa", "acta", "local", "votacion", "sufragio", "urna", "codigo", "dame", "ver", "consulta", "busca", "info", "informacion", "detalle", "datos"}
         if mesa_match and (any(w in q_norm for w in _MESA_CONTEXT_WORDS) or len(q_norm.split()) <= 2):
             # Fallback: número detectado sin keyword "mesa" explícita (e.g. "dame el 900100")
             # Requiere alguna palabra de contexto O query muy corta (solo el número)

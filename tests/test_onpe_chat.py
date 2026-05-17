@@ -342,7 +342,8 @@ def test_consulta_ambigua_devuelve_unknown(monkeypatch) -> None:
     monkeypatch.setattr(server_module, "_resolve_foreign_geo_query", lambda q: None)
     monkeypatch.setattr(server_module, "_resolve_domestic_geo_query", lambda q: None)
 
-    result = onpe_chat("¿quién ganó la elección?")
+    # Query genuinamente ambigua: sin candidato, geo, ni contexto electoral claro
+    result = onpe_chat("dame algo")
 
     assert result["ok"] is True
     data = result["data"]
