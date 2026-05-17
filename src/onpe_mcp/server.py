@@ -74,7 +74,7 @@ _CANDIDATE_VOTE_PATTERNS = [
     # "cuánto sacó/obtuvo X" / "que porcentaje obtuvo X" — también plural "cuántos"
     # acepta palabras intermedias: "cuanto porcentaje saco X", "cuantos puntos tuvo X"
     re.compile(
-        r"\b(?:cu[aá]ntos?\s+(?:\w+\s+)?|qu[eé]\s+(?:porcentaje|puntaje|puntos?|lugar|posici[oó]n)\s+)(?:sac[oó]|obtuvo|logr[oó]|llev[oó]|anot[oó]|junt[oó]|consigui[oó]|recibi[oó]|tiene|tuvo|lleg[oó])\s+(.+?)(?:\s+(?:en|a\s+nivel|total|en\s+total)\b.*)?$",
+        r"\b(?:cu[aá]ntos?\s+(?:\w+\s+)?|qu[eé]\s+(?:porcentaje|puntaje|puntos?|lugar|posici[oó]n)\s+(?:de\s+votos?\s+)?)(?:sac[oó]|obtuvo|logr[oó]|llev[oó]|anot[oó]|junt[oó]|consigui[oó]|recibi[oó]|tiene|tuvo|lleg[oó])\s+(.+?)(?:\s+(?:en|a\s+nivel|total|en\s+total)\b.*)?$",
         re.IGNORECASE,
     ),
     # "votos de X" / "votos totales de X" / "número de votos de X"
@@ -905,6 +905,20 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                 started_ms=started_ms,
             )
 
+        # Detectar años electorales pasados / futuros → unknown
+        _year_m = re.search(r"\b(20\d{2})\b", _q_norm_guard)
+        if _year_m and _year_m.group(1) != "2026":
+            return ok_response(
+                {
+                    "intent": "unknown",
+                    "answer": (
+                        f"Solo tengo datos de las elecciones peruanas 2026. "
+                        f"La consulta menciona el año {_year_m.group(1)}, que no está en mi base de datos."
+                    ),
+                },
+                started_ms=started_ms,
+            )
+
         # Detectar preguntas matemáticas / aritméticas → unknown
         if re.search(r"\bcu[aá]nto\s+es\b|\bcuanto\s+vale\b|\bcuantos\s+son\b", _q_norm_guard) and re.search(r"\d", _q_norm_guard) and not any(
             kw in _q_norm_guard for kw in ("voto", "votos", "eleccion", "candidato", "mesa")
@@ -982,6 +996,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         q = re.sub(r"\bbotos?\b", "votos", q, flags=re.IGNORECASE)  # "botos" → "votos"
         q = re.sub(r"\belecsion\b", "eleccion", q, flags=re.IGNORECASE)  # "elecsion" → "eleccion"
         q = re.sub(r"\bme+s+a\b", "mesa", q, flags=re.IGNORECASE)  # "messa/meesa/messaa" → "mesa"
+        q = re.sub(r"%", " porcentaje ", q)  # "%" → "porcentaje"
         q = re.sub(r"\s{2,}", " ", q).strip()
         # Eliminar muletillas verbales del inicio/fin (normalización lenguaje natural)
         q = _strip_filler(q)
