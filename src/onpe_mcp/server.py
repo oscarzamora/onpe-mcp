@@ -133,6 +133,11 @@ _CANDIDATE_VOTE_PATTERNS = [
         r"\bcandidato\s+([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{2,40}?)(?:\s+(?:en|a\s+nivel)\b.*)?$",
         re.IGNORECASE,
     ),
+    # "votos NAME" — reversed order (votos before name)
+    re.compile(
+        r"^votos?\s+([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,35})$",
+        re.IGNORECASE,
+    ),
 ]
 
 # Aliases culturales/coloquiales para candidatos.
@@ -180,7 +185,7 @@ _NON_CANDIDATE_EXPRESSIONS: frozenset[str] = frozenset({
     "municipalidad",
     "diaspora", "inmigrantes", "migrantes", "comunidad", "compatriotas",
     # Pronombres y verbos coloquiales que no son nombres de candidato
-    "me", "te", "le", "se", "nos", "oye", "cuanto", "cuantos", "cual", "cuales",
+    "me", "oye", "cuanto", "cuantos", "cual", "cuales",
     "puedes", "puede", "puedo", "podria", "dime", "sabes", "sabe", "entiendo",
 })
 
@@ -191,6 +196,7 @@ _MULTI_CANDIDATE_PATTERN = re.compile(
     r"|\bcomparar?\s+(?:a\s+)?(?:votos?\s+(?:de\s+)?)?(.+?)\s+(?:y|con|versus|vs\.?)\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\b([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,40}?)\s+y\s+([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,40}?)\s+en\b"
     r"|\b(.+?)\s+versus\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
+    r"|\b(.+?)\s+vs\.?\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\bdiferencia\s+(?:de\s+votos?\s+)?entre\s+(.+?)\s+y\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\b(.+?)\s+frente\s+a\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\b(.+?)\s+contra\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
