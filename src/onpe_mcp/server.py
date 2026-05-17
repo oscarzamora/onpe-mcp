@@ -642,6 +642,11 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             _num = int(mesa_match.group(1))
             if 1900 <= _num <= 2099:
                 mesa_match = None
+        # Evitar que "top 3" o "top 5" dispare intent de mesa con código "000003"
+        if mesa_match and re.search(
+            r"\btop\s+" + re.escape(mesa_match.group(1)) + r"\b", q, re.IGNORECASE
+        ):
+            mesa_match = None
         q_norm = _norm(q)
         top_n = extract_top_n(q, default=5, minimum=1, maximum=20)
 
@@ -810,7 +815,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         if _has_mesa_kw and _has_prefix_num and (_has_existence_deny or _has_describe_mesa) and not (
             "primero" in q_norm or "gano" in q_norm or "gana" in q_norm
         ):
-            mesa_prefix = extract_mesa_prefix_claim(q) or _prefix_m.group(1)  # type: ignore[union-attr]
+            mesa_prefix = _prefix_m.group(1)  # type: ignore[union-attr]
             coverage = _build_coverage_block(q_norm, id_eleccion, timeout, prefix=mesa_prefix)
             description = store.describe_mesa_prefix(mesa_prefix)
             total_mesas = int(description.get("total_mesas") or 0)
@@ -1293,6 +1298,39 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             return ok_response(data, started_ms=started_ms)
 
         # ── Geo extranjera (solo si no es doméstica) ────────────────────────
+        # Intent "extranjero" genérico: "quién va ganando en extranjero", "resultados en exterior"
+        _GENERIC_FOREIGN_WORDS = {"extranjero", "exterior", "mundo", "internacional", "overseas"}
+        if any(w in q_norm for w in _GENERIC_FOREIGN_WORDS):
+            # Obtener todos los ubigeos del catálogo extranjero
+            with store._connect() as _fc_conn:
+                _fc_rows = _fc_conn.execute("SELECT DISTINCT ubigeo FROM foreign_catalog").fetchall()
+            foreign_ubigeos = {str(r["ubigeo"]) for r in _fc_rows}
+            all_foreign = store.aggregate_votes_by_party(ubigeos=foreign_ubigeos if foreign_ubigeos else None)
+            top_f = all_foreign[:top_n]
+            cand_map_f = store.load_candidate_map(settings.source_dir / "candidato.txt")
+            total_f = sum(int(t.get("total_votos", 0)) for t in all_foreign)
+            mesas_f = store.count_mesas_by_ubigeos(foreign_ubigeos) if foreign_ubigeos else 0
+            if top_f and total_f > 0:
+                lines_f = [f"**Top {min(top_n, len(top_f))} en el exterior** ({mesas_f:,} mesas · {total_f:,} votos)\n"]
+                for i, t in enumerate(top_f[:top_n], 1):
+                    pct = int(t["total_votos"]) / total_f * 100
+                    nombre = cand_map_f.get(str(t.get("partido_id", ""))) or t["nombre_partido"]
+                    lines_f.append(f"{i}. **{nombre}** — {int(t['total_votos']):,} votos ({pct:.1f}%)")
+                answer_f = "\n".join(lines_f)
+            else:
+                answer_f = (
+                    "No hay votos del exterior en el consolidado local todavía. "
+                    "Usa onpe_sync_foreign_catalog() para cargar el catálogo de países y ciudades."
+                )
+            data = {
+                "intent": "geo_foreign_summary",
+                "answer": answer_f,
+                "result": {"top": top_f, "total_votos": total_f, "mesas": mesas_f},
+                "source": "sqlite",
+            }
+            store.append_raw_event("onpe_chat_geo_foreign_summary", {"query": q})
+            return ok_response(data, started_ms=started_ms)
+
         global _foreign_catalog_synced
         geo_resolution = _resolve_foreign_geo_query(q)
         sync_performed = False

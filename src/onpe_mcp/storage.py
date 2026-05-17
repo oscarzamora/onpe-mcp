@@ -1445,7 +1445,9 @@ class DataStore:
 
     def find_domestic_ubigeos_by_geo_name(self, query: str) -> tuple[str, list[str]] | None:
         """Busca ubigeos en ubigeo_reniec (departamento > provincia > distrito).
-        Retorna (nombre_geo, lista_ubigeos) o None si la tabla está vacía o sin coincidencias."""
+        Retorna (nombre_geo, lista_ubigeos) o None si la tabla está vacía o sin coincidencias.
+        Primero prueba el query completo; si no encuentra, prueba token a token
+        para soportar consultas como 'mesas en Pachacamac top 3'."""
         q_norm = _norm_text(query)
         if not q_norm:
             return None
@@ -1453,24 +1455,46 @@ class DataStore:
             count_row = conn.execute("SELECT COUNT(*) AS c FROM ubigeo_reniec").fetchone()
             if not count_row or int(count_row["c"] or 0) == 0:
                 return None
-            rows = conn.execute(
-                "SELECT ubigeo, departamento FROM ubigeo_reniec WHERE departamento_norm LIKE ? LIMIT 2000",
-                (f"%{q_norm}%",),
-            ).fetchall()
-            if rows:
-                return str(rows[0]["departamento"]).lower(), [str(r["ubigeo"]) for r in rows]
-            rows = conn.execute(
-                "SELECT ubigeo, provincia FROM ubigeo_reniec WHERE provincia_norm LIKE ? LIMIT 2000",
-                (f"%{q_norm}%",),
-            ).fetchall()
-            if rows:
-                return str(rows[0]["provincia"]).lower(), [str(r["ubigeo"]) for r in rows]
-            rows = conn.execute(
-                "SELECT ubigeo, distrito FROM ubigeo_reniec WHERE distrito_norm LIKE ? LIMIT 500",
-                (f"%{q_norm}%",),
-            ).fetchall()
-            if rows:
-                return str(rows[0]["distrito"]).lower(), [str(r["ubigeo"]) for r in rows]
+
+            def _search(term: str) -> tuple[str, list[str]] | None:
+                rows = conn.execute(
+                    "SELECT ubigeo, departamento FROM ubigeo_reniec WHERE departamento_norm LIKE ? LIMIT 2000",
+                    (f"%{term}%",),
+                ).fetchall()
+                if rows:
+                    return str(rows[0]["departamento"]).lower(), [str(r["ubigeo"]) for r in rows]
+                rows = conn.execute(
+                    "SELECT ubigeo, provincia FROM ubigeo_reniec WHERE provincia_norm LIKE ? LIMIT 2000",
+                    (f"%{term}%",),
+                ).fetchall()
+                if rows:
+                    return str(rows[0]["provincia"]).lower(), [str(r["ubigeo"]) for r in rows]
+                rows = conn.execute(
+                    "SELECT ubigeo, distrito FROM ubigeo_reniec WHERE distrito_norm LIKE ? LIMIT 500",
+                    (f"%{term}%",),
+                ).fetchall()
+                if rows:
+                    return str(rows[0]["distrito"]).lower(), [str(r["ubigeo"]) for r in rows]
+                return None
+
+            # 1. Intento con el query completo normalizado
+            result = _search(q_norm)
+            if result:
+                return result
+
+            # 2. Fallback: probar tokens individuales (≥4 chars), más largos primero
+            _STOPWORDS = {"dame", "de", "del", "el", "en", "es", "la", "las", "los",
+                          "mesas", "para", "que", "quienes", "resumen", "son", "top",
+                          "fueron", "hay", "quien", "gano", "cuantas", "cuanto"}
+            tokens = sorted(
+                [t for t in q_norm.split() if len(t) >= 4 and t not in _STOPWORDS],
+                key=len,
+                reverse=True,
+            )
+            for token in tokens:
+                result = _search(token)
+                if result:
+                    return result
         return None
 
     def candidate_first_places_by_mesa_prefix(
