@@ -118,6 +118,11 @@ _CANDIDATE_VOTE_PATTERNS = [
         r"^([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{2,40}?)\s+en\s+\w",
         re.IGNORECASE,
     ),
+    # "NAME PLACE votos" — bare 3-token candidate+geo pattern ("acuna piura votos")
+    re.compile(
+        r"^([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,30}?)\s+[A-Za-záéíóúñÁÉÍÓÚÑ]{3,}\s+votos?$",
+        re.IGNORECASE,
+    ),
 ]
 
 # Aliases culturales/coloquiales para candidatos.
@@ -163,7 +168,9 @@ _MULTI_CANDIDATE_PATTERN = re.compile(
     r"|\bcomparar?\s+(?:a\s+)?(?:votos?\s+(?:de\s+)?)?(.+?)\s+(?:y|con|versus|vs\.?)\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\b([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,40}?)\s+y\s+([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,40}?)\s+en\b"
     r"|\b(.+?)\s+versus\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
-    r"|\bdiferencia\s+(?:de\s+votos?\s+)?entre\s+(.+?)\s+y\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$",
+    r"|\bdiferencia\s+(?:de\s+votos?\s+)?entre\s+(.+?)\s+y\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
+    r"|\b(.+?)\s+frente\s+a\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
+    r"|\b(.+?)\s+o\s+(.+?)\s+(?:quien|cu[aá]l|cu[aá]ntos?)\s+(?:sac[oó]|tuvo|obtuvo|tiene|tiene\s+m[aá]s)",
     re.IGNORECASE,
 )
 
@@ -736,9 +743,11 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         q_norm = _norm(q)
         top_n = extract_top_n(q, default=5, minimum=1, maximum=20)
 
-        # Intención 0: legislativo (diputados/senadores) más votado por distrito
-        if "diputad" in q_norm or "senador" in q_norm:
-            cargo = "diputados" if "diputad" in q_norm else "senadores"
+        # Intención 0: legislativo (diputados/senadores/escaños) más votado por distrito
+        if "diputad" in q_norm or "senador" in q_norm or "esca" in q_norm:
+            cargo = "senadores" if ("senador" in q_norm or ("esca" in q_norm and "senador" in q_norm)) else "diputados"
+            if "senador" in q_norm:
+                cargo = "senadores"
             distrito_expr = q
             match = re.search(r"\b(?:en|para)\s+(.+)$", q, flags=re.IGNORECASE)
             if match:
@@ -1346,7 +1355,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         if _candidate_from_pattern_early and re.search(r"\s+(?:y|e)\s+", _candidate_from_pattern_early, re.IGNORECASE):
             _parts = re.split(r"\s+(?:y|e)\s+", _candidate_from_pattern_early, flags=re.IGNORECASE)
             _multi_candidates = [p.strip() for p in _parts if p.strip()]
-        elif _candidate_from_pattern_early and re.search(r"\s+(?:versus|vs\.?|con|comparado\s+con)\s+", _candidate_from_pattern_early, re.IGNORECASE):
+        elif _candidate_from_pattern_early and re.search(r"\s+(?:versus|vs\.?|con|comparado\s+con|frente\s+a)\s+", _candidate_from_pattern_early, re.IGNORECASE):
             _mc_m2 = _MULTI_CANDIDATE_PATTERN.search(q)
             if _mc_m2:
                 _mc_groups2 = [g.strip() for g in _mc_m2.groups() if g and g.strip()]
@@ -1354,8 +1363,8 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                     _multi_candidates = _mc_groups2[:2]
                     _candidate_from_pattern_early = None
             if not _multi_candidates:
-                # Fallback: split by versus/vs/comparado con
-                _parts2 = re.split(r"\s+(?:versus|vs\.?|comparado\s+con)\s+", _candidate_from_pattern_early, flags=re.IGNORECASE)
+                # Fallback: split by versus/vs/comparado con/frente a
+                _parts2 = re.split(r"\s+(?:versus|vs\.?|comparado\s+con|frente\s+a)\s+", _candidate_from_pattern_early, flags=re.IGNORECASE)
                 if len(_parts2) >= 2:
                     _multi_candidates = [p.strip() for p in _parts2 if p.strip()]
                     _candidate_from_pattern_early = None
@@ -1558,6 +1567,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "top candidatos", "top de candidatos",
             "candidatos con mas votos", "candidatos mas votados",
             "mas votados", "los mas votados",
+            "podio electoral", "podio", "lideres electorales",
         }
         _is_national = any(p in q_norm for p in _NATIONAL_PHRASES)
         if not _is_national and re.search(r"\b(top|primeros?\s+\d+)\b", q_norm) and (
