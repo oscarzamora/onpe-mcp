@@ -211,6 +211,11 @@ _CANDIDATE_VOTE_PATTERNS = [
         r"^votos?\s+([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,35})$",
         re.IGNORECASE,
     ),
+    # "NAME votos" — bare name followed by votos (order reversed, no verb)
+    re.compile(
+        r"^([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,35})\s+votos?\s*$",
+        re.IGNORECASE,
+    ),
     # "NAME resultados" — reversed order (resultados after name)
     re.compile(
         r"^([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{1,35})\s+resultados?$",
@@ -1026,6 +1031,19 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
                     "answer": (
                         "Esa consulta parece sobre deportes o competencias, no sobre resultados electorales. "
                         "Puedo responder sobre votos, candidatos y mesas electorales peruanas."
+                    ),
+                },
+                started_ms=started_ms,
+            )
+
+        # Scheduling / sports query: "cuando es el proximo partido/juego/encuentro" → non-electoral
+        if re.search(r"\b(?:cuando|que\s+dia|a\s+que\s+hora)\b", _q_norm_guard) and re.search(r"\b(?:partido|juego|encuentro|match)\b", _q_norm_guard) and not any(kw in _q_norm_guard for kw in ("voto", "votos", "eleccion", "candidato", "mesa")):
+            return ok_response(
+                {
+                    "intent": "unknown",
+                    "answer": (
+                        "Esa pregunta parece ser sobre deportes o agenda, no sobre resultados electorales. "
+                        "Puedo ayudarte con votos, candidatos y mesas de las elecciones peruanas."
                     ),
                 },
                 started_ms=started_ms,
