@@ -65,8 +65,9 @@ _foreign_catalog_synced: bool = False
 _CANDIDATE_VOTE_PATTERNS = [
     # "cuántos votos sacó/tuvo/obtuvo/logró/consiguió/recibió/juntó X"
     # incluye plural "sacaron/tuvieron/obtuvieron" para multi-candidato
+    # acepta "en total" intercalado: "cuántos votos en total obtuvo X"
     re.compile(
-        r"\bcu[aá]ntos?\s+votos?\s+(?:tuvo|tuvieron|sac[oó]|sacaron|tiene|tienen|obtuvo|obtuvieron|gan[oó]|ganaron|logr[oó]|lograron|consigui[oó]|consiguieron|recibi[oó]|recibieron|junt[oó]|juntaron)\s+(.+?)(?:\s+(?:en|a\s+nivel|para|total|en\s+total)\b.*)?$",
+        r"\bcu[aá]ntos?\s+votos?\s+(?:en\s+total\s+)?(?:tuvo|tuvieron|sac[oó]|sacaron|tiene|tienen|obtuvo|obtuvieron|gan[oó]|ganaron|logr[oó]|lograron|consigui[oó]|consiguieron|recibi[oó]|recibieron|junt[oó]|juntaron)\s+(.+?)(?:\s+(?:en|a\s+nivel|para)\b.*)?$",
         re.IGNORECASE,
     ),
     # "cuánto sacó/obtuvo/logró/llevó/anotó/juntó X" (sin "votos")
@@ -146,6 +147,11 @@ _CANDIDATE_VOTE_PATTERNS = [
     # "NAME qué tal / cómo le fue" — coloquial candidate inquiry
     re.compile(
         r"^([A-Za-záéíóúñÁÉÍÓÚÑ]+(?:\s+[A-Za-záéíóúñÁÉÍÓÚÑ]+){0,2})\s+(?:qu[eé]\s+tal|c[oó]mo\s+(?:le\s+)?(?:fue|quedo|qued[oó]|va))\b",
+        re.IGNORECASE,
+    ),
+    # "sobre/acerca de NAME en GEO" / "datos sobre NAME"
+    re.compile(
+        r"\b(?:sobre|acerca\s+de|datos?\s+(?:de|sobre))\s+([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñÁÉÍÓÚÑ]{2,40}?)(?:\s+(?:en|a\s+nivel)\b.*)?$",
         re.IGNORECASE,
     ),
 ]
@@ -333,14 +339,14 @@ def _norm(text: str) -> str:
 _FILLER_START = re.compile(
     r"^(?:"
     r"a\s+ver[,\s]+"
-    r"|(?:me\s+)?(?:puedes?\s+)?(?:decir|dime|cuéntame|cuentame|mostrarme|muéstrame)[,\s]+"
-    r"|(?:puedes?\s+)?(?:mostrarme|muéstrame)[,\s]+"
-    r"|(?:quiero|quisiera|necesito|podrias?\s+decirme|podrías?\s+decirme)\s+(?:saber\s+)?"
+    r"|(?:me\s+)?(?:puedes?\s+)?(?:decir|dime|cuéntame|cuentame|mostrarme|muéstrame|mostrar|ver)[,\s]+"
+    r"|(?:puedes?\s+)?(?:mostrarme|muéstrame|mostrar|ver)[,\s]+"
+    r"|(?:quiero|quisiera|necesito|podrias?\s+decirme|podrías?\s+decirme)\s+(?:saber\s+|ver\s+)?"
     r"|(?:oye|oiga|escucha)[,\s]+"
     r"|(?:por\s+favor[,\s]+)?"
     r"|(?:sabes?\s+(?:cuantos?|cu[aá]ntos?|como|cómo)\s+)?"
     r"|(?:dime\s+)?"
-    r"|(?:(?:me\s+)?(?:puedes?|podr[íi]as?)\s+(?:decirme\s+|mostrarme\s+)?)?"
+    r"|(?:(?:me\s+)?(?:puedes?|podr[íi]as?)\s+(?:decirme\s+|mostrarme?\s+|ver\s+)?)?"
     r")",
     re.IGNORECASE,
 )
@@ -1672,8 +1678,6 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "resultados generales", "resultados electorales generales",
             "resultados totales", "resultados finales",
             "resultados de la eleccion", "resultado de la eleccion",
-            "todos los resultados", "ver todos los resultados",
-            "todos los candidatos",
             "ganadores de", "ganadores en la",
             "total de votos", "total votos", "votos por candidato",
             "en total", "en general", "en conjunto",
@@ -1692,7 +1696,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
         if not _is_national and re.search(r"\btop\s+\d+\b", q_norm) and not re.search(r"\ben\s+\w", q_norm):
             _is_national = True
         # "todos" + (candidatos|resultados|votos) sin geo → nacional
-        if not _is_national and "todos" in q_norm and not re.search(r"\ben\s+\w", q_norm):
+        if not _is_national and "todos" in q_norm and not re.search(r"\b(?:en|de)\s+\w", q_norm):
             if "candidatos" in q_norm or "resultados" in q_norm or "votos" in q_norm:
                 _is_national = True
         # "candidatos/candidato" sin geo → nacional (ej: "cuántos candidatos se presentaron")
