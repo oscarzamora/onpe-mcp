@@ -1676,6 +1676,8 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "todos los candidatos",
             "ganadores de", "ganadores en la",
             "total de votos", "total votos", "votos por candidato",
+            "en total", "en general", "en conjunto",
+            "participacion electoral", "participacion",
             "al pais", "en el pais", "todo el pais", "el pais",
         }
         _is_national = any(p in q_norm for p in _NATIONAL_PHRASES)
