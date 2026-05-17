@@ -259,6 +259,7 @@ _MULTI_CANDIDATE_PATTERN = re.compile(
     r"|\b(?:si\s+)?(.+?)\s+(?:le\s+)?gan[oó]\s+(?:a|contra)\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\btanto\s+(.+?)\s+como\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\b(.+?)\s+(?:tuvo|sac[oó]|obtuvo)\s+m[aá]s\s+votos?\s+que\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
+    r"|\bcu[aá]nto\s+m[aá]s\s+(?:sac[oó]|tuvo|obtuvo|lleva|tiene)\s+(.+?)\s+que\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$"
     r"|\b(.+?)\s+m[aá]s\s+que\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$",
     re.IGNORECASE,
 )
@@ -850,13 +851,20 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 30) -> dict[str,
             "tipo de cambio", "cotizacion", "bitcoin", "criptomoneda",
             "llover", "lluvia", "lluvias", "llueve", "calor", "frio", "viento",
             "trafico", "congestion", "accidente", "noticias", "noticia",
+            "moneda", "cambio de moneda", "tipo de cambio",
         })
+        # "tiempo" alone is ambiguous; only block if paired with weather words
+        # "cuanto vale" = pricing query → non-electoral
+        _has_price_query = bool(
+            re.search(r"\bcu[aá]nto\s+vale\b", _q_norm_guard)
+            and not any(kw in _q_norm_guard for kw in ("voto", "votos", "eleccion", "candidato", "mesa"))
+        )
         # "tiempo" alone is ambiguous (also = "time"); only block if paired with weather words
         _has_weather = bool(
             _NON_ELECTORAL_TOKENS & set(_q_norm_guard.split())
             or ("tiempo" in _q_norm_guard and any(w in _q_norm_guard for w in ("hoy", "manana", "clima", "llov")))
         )
-        if _has_weather and not any(
+        if (_has_weather or _has_price_query) and not any(
             kw in _q_norm_guard for kw in (
                 "voto", "votos", "eleccion", "resultado", "candidato", "mesa",
                 "senador", "diputado", "congresista", "partido"
