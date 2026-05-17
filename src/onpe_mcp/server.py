@@ -106,9 +106,9 @@ _CANDIDATE_VOTE_PATTERNS = [
         r"\b(?:marcador|puntuaci[oó]n|performance|ranking|resumen\s+de\s+votos)\s+de\s+(.+?)(?:\s+(?:en|a\s+nivel|total|nacional)\b.*)?$",
         re.IGNORECASE,
     ),
-    # "qué lugar sacó X" / "qué posición tiene X"
+    # "qué lugar sacó X" / "cuál fue el lugar de X" / "en qué posición quedó X"
     re.compile(
-        r"\bqu[eé]\s+(?:lugar|posici[oó]n|puesto)\s+(?:sac[oó]|tiene|obtuvo|qued[oó])\s+(.+?)$",
+        r"\b(?:qu[eé]\s+(?:lugar|posici[oó]n|puesto)\s+(?:sac[oó]|tiene|obtuvo|qued[oó])|cu[aá]l\s+(?:fue|es)\s+(?:el|la)\s+(?:lugar|posici[oó]n|puesto)\s+de)\s+(.+?)(?:\s+(?:en|a\s+nivel)\b.*)?$",
         re.IGNORECASE,
     ),
     # "X cuántos votos" (order reversed) — also "X cuántos lleva/tiene/acumula"
@@ -205,9 +205,13 @@ _NON_CANDIDATE_EXPRESSIONS: frozenset[str] = frozenset({
     "region", "departamento", "provincia", "distrito", "localidad", "municipio",
     "municipalidad",
     "diaspora", "inmigrantes", "migrantes", "comunidad", "compatriotas",
-    # Pronombres y verbos coloquiales que no son nombres de candidato
-    "me", "oye", "cuanto", "cuantos", "cuanta", "cuantas", "cual", "cuales",
-    "gente", "pueblo", "poblacion",  # colectivos que no son candidatos
+    # Pronombres relativos que no son nombres de candidato
+    "que", "cual", "cuales",  # "el que gano en Arequipa" → geo, no candidato
+    # Palabras de código/número que no son candidato
+    "codigo", "codigos", "numero", "numeros", "id",
+    # Colectivos y verbos coloquiales que no son nombres de candidato
+    "me", "oye", "cuanto", "cuantos", "cuanta", "cuantas",
+    "gente", "pueblo", "poblacion",
     "puedes", "puede", "puedo", "podria", "dime", "sabes", "sabe", "entiendo",
     "paso", "paso en",  # verbo "pasó" coloquial en preguntas geográficas
 })
