@@ -23,6 +23,9 @@ class Settings:
     auto_hydrate_max_mesas: int
     atu_manera_bootstrap: bool
     atu_manera_csv_path: str
+    sv_scraper_root: Path
+    sv_output_dir: Path
+    sv_resumen_dir: Path
 
     @staticmethod
     def from_env() -> "Settings":
@@ -60,6 +63,18 @@ class Settings:
         raw_auto_hydrate_max = os.getenv("ONPE_AUTO_HYDRATE_MAX_MESAS", "5").strip()
         raw_atu_manera_bootstrap = os.getenv("ONPE_ATU_MANERA_BOOTSTRAP", "false").strip().lower()
         atu_manera_csv_path = os.getenv("ONPE_ATU_MANERA_CSV_PATH", "").strip()
+        sv_scraper_root = Path(
+            os.getenv(
+                "ONPE_SV_SCRAPER_ROOT",
+                str((workspace_default / ".." / "onpe-scraper-2026-2").resolve()),
+            )
+        ).resolve()
+        sv_output_dir = Path(
+            os.getenv("ONPE_SV_OUTPUT_DIR", str((sv_scraper_root / "output").resolve()))
+        ).resolve()
+        sv_resumen_dir = Path(
+            os.getenv("ONPE_SV_RESUMEN_DIR", str((sv_scraper_root / "resumen").resolve()))
+        ).resolve()
 
         try:
             max_batch_size = int(raw_batch)
@@ -107,4 +122,7 @@ class Settings:
             auto_hydrate_max_mesas=auto_hydrate_max_mesas,
             atu_manera_bootstrap=atu_manera_bootstrap,
             atu_manera_csv_path=atu_manera_csv_path,
+            sv_scraper_root=sv_scraper_root,
+            sv_output_dir=sv_output_dir,
+            sv_resumen_dir=sv_resumen_dir,
         )

@@ -280,6 +280,187 @@ class DataStore:
                 CREATE INDEX IF NOT EXISTS idx_onpe_api_dept_norm ON ubigeo_onpe_api (departamento_norm);
                 CREATE INDEX IF NOT EXISTS idx_onpe_api_prov_norm ON ubigeo_onpe_api (provincia_norm);
                 CREATE INDEX IF NOT EXISTS idx_onpe_api_dist_norm ON ubigeo_onpe_api (distrito_norm);
+
+                -- ═══ SEGUNDA VUELTA (SV) ═══════════════════════════════════════════════════
+
+                CREATE TABLE IF NOT EXISTS mesas_sv (
+                    codigo_mesa TEXT PRIMARY KEY,
+                    id_ubigeo TEXT,
+                    nombre_local TEXT,
+                    id_ambito INTEGER,
+                    electores_habiles INTEGER,
+                    votos_emitidos INTEGER,
+                    votos_validos INTEGER,
+                    total_asistentes INTEGER,
+                    codigo_estado_acta TEXT,
+                    fetched_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_mesas_sv_ubigeo ON mesas_sv (id_ubigeo);
+                CREATE INDEX IF NOT EXISTS idx_mesas_sv_estado ON mesas_sv (codigo_estado_acta);
+
+                CREATE TABLE IF NOT EXISTS votos_sv (
+                    codigo_mesa TEXT NOT NULL,
+                    partido_id TEXT NOT NULL,
+                    votos INTEGER,
+                    fetched_at TEXT NOT NULL,
+                    PRIMARY KEY (codigo_mesa, partido_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_votos_sv_partido ON votos_sv (partido_id);
+                CREATE INDEX IF NOT EXISTS idx_votos_sv_mesa ON votos_sv (codigo_mesa);
+
+                CREATE TABLE IF NOT EXISTS agrupaciones_sv (
+                    partido_id TEXT PRIMARY KEY,
+                    nombre TEXT,
+                    fetched_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS ubicaciones_sv (
+                    ubigeo TEXT PRIMARY KEY,
+                    ambito TEXT,
+                    departamento TEXT,
+                    provincia TEXT,
+                    distrito TEXT,
+                    continente TEXT,
+                    pais TEXT,
+                    ciudad TEXT,
+                    fetched_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_ubicaciones_sv_dep ON ubicaciones_sv (departamento);
+                CREATE INDEX IF NOT EXISTS idx_ubicaciones_sv_prov ON ubicaciones_sv (provincia);
+
+                CREATE TABLE IF NOT EXISTS locales_reasignados_sv (
+                    nro INTEGER PRIMARY KEY,
+                    odpe TEXT,
+                    dpto TEXT,
+                    provincia TEXT,
+                    distrito TEXT,
+                    ccpp TEXT,
+                    nombre_local_original TEXT,
+                    nombre_local_nuevo TEXT,
+                    motivo TEXT,
+                    mesas_afectadas INTEGER,
+                    estado_parseo TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_reasignados_dpto ON locales_reasignados_sv (dpto);
+                CREATE INDEX IF NOT EXISTS idx_reasignados_motivo ON locales_reasignados_sv (motivo);
+
+                -- sv_resumen_* tables loaded from scraper's resumen/ files
+
+                CREATE TABLE IF NOT EXISTS sv_resumen_nacional (
+                    partido_id TEXT PRIMARY KEY,
+                    nombre_candidato TEXT,
+                    nombre_agrupacion TEXT,
+                    votos_validos INTEGER,
+                    pct_votos_validos REAL,
+                    pct_votos_emitidos REAL,
+                    actas_contabilizadas_pct REAL,
+                    contabilizadas INTEGER,
+                    total_actas INTEGER,
+                    participacion_ciudadana REAL,
+                    fecha_actualizacion TEXT,
+                    fuente TEXT,
+                    loaded_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS sv_resumen_departamentos (
+                    ubigeo TEXT NOT NULL,
+                    partido_id TEXT NOT NULL,
+                    nombre_candidato TEXT,
+                    nombre_agrupacion TEXT,
+                    votos_validos INTEGER,
+                    pct_votos_validos REAL,
+                    pct_votos_emitidos REAL,
+                    total_votos_validos_geo INTEGER,
+                    total_votos_emitidos_geo INTEGER,
+                    fuente TEXT,
+                    loaded_at TEXT NOT NULL,
+                    PRIMARY KEY (ubigeo, partido_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_sv_rdept_ubigeo ON sv_resumen_departamentos (ubigeo);
+
+                CREATE TABLE IF NOT EXISTS sv_resumen_provincias (
+                    ubigeo TEXT NOT NULL,
+                    partido_id TEXT NOT NULL,
+                    nombre_candidato TEXT,
+                    nombre_agrupacion TEXT,
+                    nombre_geo TEXT,
+                    votos_validos INTEGER,
+                    pct_votos_validos REAL,
+                    pct_votos_emitidos REAL,
+                    total_votos_validos_geo INTEGER,
+                    total_votos_emitidos_geo INTEGER,
+                    fuente TEXT,
+                    loaded_at TEXT NOT NULL,
+                    PRIMARY KEY (ubigeo, partido_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_sv_rprov_ubigeo ON sv_resumen_provincias (ubigeo);
+                CREATE INDEX IF NOT EXISTS idx_sv_rprov_nombre_geo ON sv_resumen_provincias (nombre_geo);
+
+                CREATE TABLE IF NOT EXISTS sv_resumen_cobertura (
+                    ubigeo TEXT PRIMARY KEY,
+                    nombre_departamento TEXT,
+                    actas_contabilizadas INTEGER,
+                    pct_actas_contabilizadas REAL,
+                    fuente TEXT,
+                    loaded_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_sv_rcob_ubigeo ON sv_resumen_cobertura (ubigeo);
+
+                -- CTAS aggregation tables (distrito and ciudad level — scraper doesn't pre-compute these)
+
+                CREATE TABLE IF NOT EXISTS sv_agg_distrito (
+                    ubigeo TEXT NOT NULL,
+                    partido_id TEXT NOT NULL,
+                    nombre_candidato TEXT,
+                    votos INTEGER,
+                    total_mesas INTEGER,
+                    mesas_contabilizadas INTEGER,
+                    rebuilt_at TEXT NOT NULL,
+                    PRIMARY KEY (ubigeo, partido_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_sv_agg_distrito_ubigeo ON sv_agg_distrito (ubigeo);
+
+                CREATE TABLE IF NOT EXISTS sv_agg_ciudad (
+                    ubigeo TEXT NOT NULL,
+                    ciudad TEXT NOT NULL,
+                    partido_id TEXT NOT NULL,
+                    nombre_candidato TEXT,
+                    votos INTEGER,
+                    total_mesas INTEGER,
+                    mesas_contabilizadas INTEGER,
+                    rebuilt_at TEXT NOT NULL,
+                    PRIMARY KEY (ubigeo, ciudad, partido_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_sv_agg_ciudad_ubigeo ON sv_agg_ciudad (ubigeo);
+                CREATE INDEX IF NOT EXISTS idx_sv_agg_ciudad_nombre ON sv_agg_ciudad (ciudad);
+
+                -- Vote transfer projection table
+                CREATE TABLE IF NOT EXISTS proyeccion_sv_by_ubigeo (
+                    ubigeo TEXT PRIMARY KEY,
+                    votos_1v_total INTEGER,
+                    votos_proyectados_keiko INTEGER,
+                    votos_proyectados_sanchez INTEGER,
+                    votos_proyectados_bn INTEGER,
+                    votos_abstencion_estimada INTEGER,
+                    rebuilt_at TEXT NOT NULL
+                );
+
+                -- Transfer map seeds (static knowledge)
+                CREATE TABLE IF NOT EXISTS voto_transfer_map (
+                    partido_nombre_norm TEXT PRIMARY KEY,
+                    peso_keiko REAL NOT NULL,
+                    peso_sanchez REAL NOT NULL,
+                    peso_bn REAL NOT NULL,
+                    fuente TEXT NOT NULL,
+                    loaded_at TEXT NOT NULL
+                );
+
+                -- Scraper commit guard (avoid redundant full rebuilds)
+                CREATE TABLE IF NOT EXISTS sv_sync_meta (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
                 """
             )
 
@@ -2434,3 +2615,1402 @@ class DataStore:
             "top_ciudades": top_ciudades,
             "sample": sample,
         }
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # ─── SEGUNDA VUELTA METHODS ─────────────────────────────────────────────
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def get_sv_sync_meta(self, key: str) -> str | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT value FROM sv_sync_meta WHERE key = ?", (key,)
+            ).fetchone()
+        return str(row["value"]) if row else None
+
+    def set_sv_sync_meta(self, key: str, value: str) -> None:
+        now = self.now_iso()
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO sv_sync_meta (key, value, updated_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+                (key, value, now),
+            )
+
+    def bootstrap_sv_mesas(self, sv_output_dir: Path) -> int:
+        """Load/UPSERT mesas_sv from mesas_data.txt. Returns rows_affected."""
+        mesas_file = sv_output_dir / "mesas_data.txt"
+        if not mesas_file.exists():
+            return 0
+        now = self.now_iso()
+        count = 0
+        with self._connect() as conn:
+            with mesas_file.open("r", encoding="utf-8-sig", newline="") as f:
+                reader = csv.DictReader(f, delimiter="\t")
+                for row in reader:
+                    cm = str(row.get("codigo_mesa", "")).strip()
+                    if not cm:
+                        continue
+                    conn.execute(
+                        """INSERT INTO mesas_sv (
+                            codigo_mesa, id_ubigeo, nombre_local, id_ambito,
+                            electores_habiles, votos_emitidos, votos_validos,
+                            total_asistentes, codigo_estado_acta, fetched_at
+                        ) VALUES (?,?,?,?,?,?,?,?,?,?)
+                        ON CONFLICT(codigo_mesa) DO UPDATE SET
+                            id_ubigeo=excluded.id_ubigeo,
+                            nombre_local=excluded.nombre_local,
+                            id_ambito=excluded.id_ambito,
+                            electores_habiles=excluded.electores_habiles,
+                            votos_emitidos=excluded.votos_emitidos,
+                            votos_validos=excluded.votos_validos,
+                            total_asistentes=excluded.total_asistentes,
+                            codigo_estado_acta=excluded.codigo_estado_acta,
+                            fetched_at=excluded.fetched_at""",
+                        (
+                            cm,
+                            str(row.get("id_ubigeo", "")).strip(),
+                            str(row.get("nombre_local_votacion", "")).strip(),
+                            int(str(row.get("id_ambito_geografico", "1")).strip() or 1),
+                            int(str(row.get("electores_habiles", "0")).strip() or 0),
+                            int(str(row.get("votos_emitidos", "0")).strip() or 0),
+                            int(str(row.get("votos_validos", "0")).strip() or 0),
+                            int(str(row.get("total_asistentes", "0")).strip() or 0),
+                            str(row.get("codigo_estado_acta", "")).strip(),
+                            now,
+                        ),
+                    )
+                    count += 1
+        return count
+
+    def bootstrap_sv_votos(self, sv_output_dir: Path) -> int:
+        """Load/UPSERT votos_sv from votos.txt. Returns rows_affected."""
+        votos_file = sv_output_dir / "votos.txt"
+        if not votos_file.exists():
+            return 0
+        now = self.now_iso()
+        count = 0
+        with self._connect() as conn:
+            with votos_file.open("r", encoding="utf-8-sig", newline="") as f:
+                reader = csv.DictReader(f, delimiter="\t")
+                for row in reader:
+                    cm = str(row.get("codigo_mesa", "")).strip()
+                    pid = str(row.get("partido_id", "")).strip()
+                    votos_raw = str(row.get("votos", "0")).strip()
+                    if not cm or not pid or not votos_raw.lstrip("-").isdigit():
+                        continue
+                    conn.execute(
+                        """INSERT INTO votos_sv (codigo_mesa, partido_id, votos, fetched_at)
+                        VALUES (?,?,?,?)
+                        ON CONFLICT(codigo_mesa, partido_id) DO UPDATE SET
+                            votos=excluded.votos, fetched_at=excluded.fetched_at""",
+                        (cm, pid, int(votos_raw), now),
+                    )
+                    count += 1
+        return count
+
+    def bootstrap_sv_agrupaciones(self, sv_output_dir: Path) -> int:
+        agr_file = sv_output_dir / "agrupaciones.txt"
+        if not agr_file.exists():
+            return 0
+        now = self.now_iso()
+        count = 0
+        with self._connect() as conn:
+            with agr_file.open("r", encoding="utf-8-sig", newline="") as f:
+                reader = csv.DictReader(f, delimiter="\t")
+                for row in reader:
+                    pid = str(row.get("partido_id", "")).strip()
+                    if not pid:
+                        continue
+                    conn.execute(
+                        """INSERT INTO agrupaciones_sv (partido_id, nombre, fetched_at)
+                        VALUES (?,?,?)
+                        ON CONFLICT(partido_id) DO UPDATE SET nombre=excluded.nombre, fetched_at=excluded.fetched_at""",
+                        (pid, str(row.get("nombre", "")).strip(), now),
+                    )
+                    count += 1
+        return count
+
+    def bootstrap_sv_ubicaciones(self, sv_output_dir: Path) -> int:
+        ub_file = sv_output_dir / "ubicaciones.txt"
+        if not ub_file.exists():
+            return 0
+        now = self.now_iso()
+        count = 0
+        with self._connect() as conn:
+            with ub_file.open("r", encoding="utf-8-sig", newline="") as f:
+                reader = csv.DictReader(f, delimiter="\t")
+                for row in reader:
+                    ubigeo = str(row.get("ubigeo", "")).strip()
+                    if not ubigeo:
+                        continue
+                    conn.execute(
+                        """INSERT INTO ubicaciones_sv (ubigeo, ambito, departamento, provincia, distrito, continente, pais, ciudad, fetched_at)
+                        VALUES (?,?,?,?,?,?,?,?,?)
+                        ON CONFLICT(ubigeo) DO UPDATE SET
+                            ambito=excluded.ambito, departamento=excluded.departamento,
+                            provincia=excluded.provincia, distrito=excluded.distrito,
+                            continente=excluded.continente, pais=excluded.pais,
+                            ciudad=excluded.ciudad, fetched_at=excluded.fetched_at""",
+                        (
+                            ubigeo,
+                            str(row.get("ambito", "")).strip(),
+                            str(row.get("departamento", "")).strip(),
+                            str(row.get("provincia", "")).strip(),
+                            str(row.get("distrito", "")).strip(),
+                            str(row.get("continente", "")).strip(),
+                            str(row.get("pais", "")).strip(),
+                            str(row.get("ciudad", "")).strip(),
+                            now,
+                        ),
+                    )
+                    count += 1
+        return count
+
+    def bootstrap_sv_reasignados(self, sv_output_dir: Path) -> int:
+        reass_file = sv_output_dir / "locales_reasignados_segunda_vuelta_2026.txt"
+        if not reass_file.exists():
+            return 0
+        count = 0
+        with self._connect() as conn:
+            with reass_file.open("r", encoding="utf-8-sig", newline="") as f:
+                reader = csv.DictReader(f, delimiter="\t")
+                for row in reader:
+                    nro_raw = str(row.get("nro", "")).strip()
+                    if not nro_raw.isdigit():
+                        continue
+                    conn.execute(
+                        """INSERT INTO locales_reasignados_sv (
+                            nro, odpe, dpto, provincia, distrito, ccpp,
+                            nombre_local_original, nombre_local_nuevo, motivo, mesas_afectadas, estado_parseo
+                        ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                        ON CONFLICT(nro) DO UPDATE SET
+                            odpe=excluded.odpe, dpto=excluded.dpto, provincia=excluded.provincia,
+                            distrito=excluded.distrito, ccpp=excluded.ccpp,
+                            nombre_local_original=excluded.nombre_local_original,
+                            nombre_local_nuevo=excluded.nombre_local_nuevo,
+                            motivo=excluded.motivo, mesas_afectadas=excluded.mesas_afectadas,
+                            estado_parseo=excluded.estado_parseo""",
+                        (
+                            int(nro_raw),
+                            str(row.get("odpe", "")).strip(),
+                            str(row.get("dpto", "")).strip(),
+                            str(row.get("provincia", "")).strip(),
+                            str(row.get("distrito", "")).strip(),
+                            str(row.get("ccpp", "")).strip(),
+                            str(row.get("nombre_local_votacion", "")).strip(),
+                            str(row.get("nombre_local_votacion_nuevo", "")).strip(),
+                            str(row.get("motivo", "")).strip(),
+                            int(str(row.get("mesas_a_reasignar", "0")).strip() or 0),
+                            str(row.get("estado_parseo", "")).strip(),
+                        ),
+                    )
+                    count += 1
+        return count
+
+    def bootstrap_resumen_sv(self, sv_resumen_dir: Path) -> dict[str, int]:
+        """Load all 4 resumen files transactionally. Full replace."""
+
+        def _safe_int(value: Any) -> int:
+            raw = str(value or "").strip()
+            if not raw:
+                return 0
+            try:
+                return int(float(raw))
+            except ValueError:
+                return 0
+
+        def _safe_float(value: Any) -> float:
+            raw = str(value or "").strip()
+            if not raw:
+                return 0.0
+            try:
+                return float(raw)
+            except ValueError:
+                return 0.0
+
+        def _infer_pid(row: dict[str, Any], fallback_index: int) -> str:
+            pid = str(row.get("partido_id", "")).strip()
+            if pid:
+                return pid
+            label = _norm_text(
+                str(row.get("nombre_agrupacion_politica", "")).strip()
+                or str(row.get("nombre_candidato", "")).strip()
+            )
+            explicit = {
+                "fuerza popular": "8",
+                "keiko sofia fujimori higuchi": "8",
+                "juntos por el peru": "10",
+                "roberto helbert sanchez palomino": "10",
+                "votos en blanco": "80",
+                "votos nulos": "81",
+                "votos impugnados": "82",
+            }
+            return explicit.get(label, f"sv_nacional_{fallback_index}")
+
+        now = self.now_iso()
+        counts: dict[str, int] = {"nacional": 0, "departamentos": 0, "provincias": 0, "cobertura": 0}
+
+        nac_file = sv_resumen_dir / "resumen_nacional.txt"
+        nacionales: list[tuple[Any, ...]] = []
+        if nac_file.exists():
+            with nac_file.open("r", encoding="utf-8-sig", newline="") as f:
+                reader = csv.DictReader(f, delimiter="\t")
+                for idx, row in enumerate(reader, start=1):
+                    pid = _infer_pid(row, idx)
+                    nacionales.append((
+                        pid,
+                        str(row.get("nombre_candidato", "")).strip(),
+                        str(row.get("nombre_agrupacion_politica", "")).strip(),
+                        _safe_int(row.get("votos_validos", "0")),
+                        _safe_float(row.get("pct_votos_validos", "0")),
+                        _safe_float(row.get("pct_votos_emitidos", "0")),
+                        _safe_float(row.get("actas_contabilizadas_pct", "0")),
+                        _safe_int(row.get("contabilizadas", "0")),
+                        _safe_int(row.get("total_actas", "0")),
+                        _safe_float(row.get("participacion_ciudadana", "0")),
+                        str(row.get("fecha_actualizacion", "")).strip(),
+                        str(row.get("fuente", "")).strip(),
+                        now,
+                    ))
+
+        dept_file = sv_resumen_dir / "resumen_departamentos.txt"
+        departamentos: list[tuple[Any, ...]] = []
+        if dept_file.exists():
+            with dept_file.open("r", encoding="utf-8-sig", newline="") as f:
+                reader = csv.DictReader(f, delimiter="\t")
+                for row in reader:
+                    ubigeo = str(row.get("ubigeo", "")).strip()
+                    pid = str(row.get("partido_id", "")).strip()
+                    if not ubigeo or not pid:
+                        continue
+                    departamentos.append((
+                        ubigeo, pid,
+                        str(row.get("nombre_candidato", "")).strip(),
+                        str(row.get("nombre_agrupacion_politica", "")).strip(),
+                        _safe_int(row.get("votos_validos", "0")),
+                        _safe_float(row.get("pct_votos_validos", "0")),
+                        _safe_float(row.get("pct_votos_emitidos", "0")),
+                        _safe_int(row.get("total_votos_validos_geo", "0")),
+                        _safe_int(row.get("total_votos_emitidos_geo", "0")),
+                        str(row.get("fuente", "")).strip(),
+                        now,
+                    ))
+
+        prov_file = sv_resumen_dir / "resumen_provincias.txt"
+        provincias: list[tuple[Any, ...]] = []
+        if prov_file.exists():
+            with prov_file.open("r", encoding="utf-8-sig", newline="") as f:
+                reader = csv.DictReader(f, delimiter="\t")
+                for row in reader:
+                    ubigeo = str(row.get("ubigeo", "")).strip()
+                    pid = str(row.get("partido_id", "")).strip()
+                    if not ubigeo or not pid:
+                        continue
+                    provincias.append((
+                        ubigeo, pid,
+                        str(row.get("nombre_candidato", "")).strip(),
+                        str(row.get("nombre_agrupacion_politica", "")).strip(),
+                        "",
+                        _safe_int(row.get("votos_validos", "0")),
+                        _safe_float(row.get("pct_votos_validos", "0")),
+                        _safe_float(row.get("pct_votos_emitidos", "0")),
+                        _safe_int(row.get("total_votos_validos_geo", "0")),
+                        _safe_int(row.get("total_votos_emitidos_geo", "0")),
+                        str(row.get("fuente", "")).strip(),
+                        now,
+                    ))
+
+        cob_file = sv_resumen_dir / "resumen_cobertura_departamentos.txt"
+        coberturas: list[tuple[Any, ...]] = []
+        if cob_file.exists():
+            with cob_file.open("r", encoding="utf-8-sig", newline="") as f:
+                reader = csv.DictReader(f, delimiter="\t")
+                for row in reader:
+                    ubigeo = str(row.get("ubigeo", "")).strip()
+                    if not ubigeo:
+                        continue
+                    coberturas.append((
+                        ubigeo,
+                        str(row.get("nombre_departamento", "")).strip(),
+                        _safe_int(row.get("actas_contabilizadas", "0")),
+                        _safe_float(row.get("pct_actas_contabilizadas", "0")),
+                        str(row.get("fuente", "")).strip(),
+                        now,
+                    ))
+
+        with self._connect() as conn:
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                conn.execute("DELETE FROM sv_resumen_nacional")
+                if nacionales:
+                    conn.executemany(
+                        """INSERT INTO sv_resumen_nacional
+                        (partido_id, nombre_candidato, nombre_agrupacion, votos_validos,
+                         pct_votos_validos, pct_votos_emitidos, actas_contabilizadas_pct,
+                         contabilizadas, total_actas, participacion_ciudadana,
+                         fecha_actualizacion, fuente, loaded_at)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        nacionales,
+                    )
+                    counts["nacional"] = len(nacionales)
+
+                conn.execute("DELETE FROM sv_resumen_departamentos")
+                if departamentos:
+                    conn.executemany(
+                        """INSERT INTO sv_resumen_departamentos
+                        (ubigeo, partido_id, nombre_candidato, nombre_agrupacion,
+                         votos_validos, pct_votos_validos, pct_votos_emitidos,
+                         total_votos_validos_geo, total_votos_emitidos_geo, fuente, loaded_at)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                        departamentos,
+                    )
+                    counts["departamentos"] = len(departamentos)
+
+                conn.execute("DELETE FROM sv_resumen_provincias")
+                if provincias:
+                    conn.executemany(
+                        """INSERT INTO sv_resumen_provincias
+                        (ubigeo, partido_id, nombre_candidato, nombre_agrupacion, nombre_geo,
+                         votos_validos, pct_votos_validos, pct_votos_emitidos,
+                         total_votos_validos_geo, total_votos_emitidos_geo, fuente, loaded_at)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        provincias,
+                    )
+                    # Populate nombre_geo: ubigeo_reniec/ubicaciones_sv have district-level
+                    # ubigeos, while sv_resumen_provincias has province/country ubigeos.
+                    # Match on first 4 chars (province prefix) to find a representative row.
+                    conn.execute(
+                        """UPDATE sv_resumen_provincias
+                        SET nombre_geo = COALESCE(
+                            NULLIF((
+                                SELECT CASE
+                                    WHEN substr(sv_resumen_provincias.ubigeo, 1, 1) = '9'
+                                        THEN COALESCE(NULLIF(u.pais, ''), NULLIF(u.ciudad, ''), NULLIF(u.continente, ''))
+                                    ELSE COALESCE(NULLIF(u.provincia, ''), NULLIF(u.departamento, ''), NULLIF(u.distrito, ''))
+                                END
+                                FROM ubicaciones_sv u
+                                WHERE u.ubigeo LIKE SUBSTR(sv_resumen_provincias.ubigeo, 1, 4) || '%'
+                                LIMIT 1
+                            ), ''),
+                            NULLIF(nombre_geo, '')
+                        )
+                        WHERE nombre_geo IS NULL OR nombre_geo = ''"""
+                    )
+                    counts["provincias"] = len(provincias)
+
+                conn.execute("DELETE FROM sv_resumen_cobertura")
+                if coberturas:
+                    conn.executemany(
+                        """INSERT INTO sv_resumen_cobertura
+                        (ubigeo, nombre_departamento, actas_contabilizadas,
+                         pct_actas_contabilizadas, fuente, loaded_at)
+                        VALUES (?,?,?,?,?,?)""",
+                        coberturas,
+                    )
+                    counts["cobertura"] = len(coberturas)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+
+        return counts
+
+    def populate_sv_nombre_geo(self) -> int:
+        """Populate nombre_geo in sv_resumen_provincias for existing rows.
+
+        Uses LIKE on first 4 chars of ubigeo to match district-level rows in
+        ubicaciones_sv (which don't have exact province-level ubigeo matches).
+        Returns number of rows updated.
+        """
+        with self._connect() as conn:
+            result = conn.execute(
+                """UPDATE sv_resumen_provincias
+                SET nombre_geo = COALESCE(
+                    NULLIF((
+                        SELECT CASE
+                            WHEN substr(sv_resumen_provincias.ubigeo, 1, 1) = '9'
+                                THEN COALESCE(NULLIF(u.pais, ''), NULLIF(u.ciudad, ''), NULLIF(u.continente, ''))
+                            ELSE COALESCE(NULLIF(u.provincia, ''), NULLIF(u.departamento, ''), NULLIF(u.distrito, ''))
+                        END
+                        FROM ubicaciones_sv u
+                        WHERE u.ubigeo LIKE SUBSTR(sv_resumen_provincias.ubigeo, 1, 4) || '%'
+                        LIMIT 1
+                    ), ''),
+                    NULLIF(nombre_geo, '')
+                )
+                WHERE nombre_geo IS NULL OR nombre_geo = ''"""
+            )
+            return result.rowcount
+
+
+        """Rebuild sv_agg_distrito and sv_agg_ciudad via CTAS from raw tables."""
+        now = self.now_iso()
+        with self._connect() as conn:
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                conn.execute("DROP TABLE IF EXISTS _sv_base")
+                conn.execute(
+                    """
+                    CREATE TEMP TABLE _sv_base AS
+                    SELECT
+                        m.codigo_mesa,
+                        m.id_ubigeo AS ubigeo,
+                        COALESCE(u.departamento, '') AS departamento,
+                        COALESCE(u.provincia, '') AS provincia,
+                        COALESCE(u.distrito, '') AS distrito,
+                        COALESCE(NULLIF(u.ciudad, ''), NULLIF(u.distrito, ''), NULLIF(u.provincia, ''), '') AS ciudad,
+                        m.codigo_estado_acta,
+                        v.partido_id,
+                        COALESCE(a.nombre, COALESCE(v.partido_id, '')) AS nombre_candidato,
+                        COALESCE(v.votos, 0) AS votos
+                    FROM mesas_sv m
+                    LEFT JOIN ubicaciones_sv u ON u.ubigeo = m.id_ubigeo
+                    LEFT JOIN votos_sv v ON v.codigo_mesa = m.codigo_mesa
+                    LEFT JOIN agrupaciones_sv a ON a.partido_id = v.partido_id
+                    """
+                )
+
+                conn.execute("DROP TABLE IF EXISTS sv_agg_distrito_new")
+                conn.execute(
+                    """CREATE TABLE sv_agg_distrito_new (
+                        ubigeo TEXT NOT NULL,
+                        partido_id TEXT NOT NULL,
+                        nombre_candidato TEXT,
+                        votos INTEGER,
+                        total_mesas INTEGER,
+                        mesas_contabilizadas INTEGER,
+                        rebuilt_at TEXT NOT NULL,
+                        PRIMARY KEY (ubigeo, partido_id)
+                    )"""
+                )
+                conn.execute(
+                    f"""
+                    INSERT INTO sv_agg_distrito_new
+                    (ubigeo, partido_id, nombre_candidato, votos, total_mesas, mesas_contabilizadas, rebuilt_at)
+                    SELECT
+                        ubigeo,
+                        partido_id,
+                        MAX(nombre_candidato) AS nombre_candidato,
+                        SUM(votos) AS votos,
+                        COUNT(DISTINCT codigo_mesa) AS total_mesas,
+                        COUNT(DISTINCT CASE WHEN codigo_estado_acta='C' THEN codigo_mesa END) AS mesas_contabilizadas,
+                        '{now}' AS rebuilt_at
+                    FROM _sv_base
+                    WHERE partido_id IS NOT NULL AND partido_id != '' AND ubigeo != ''
+                    GROUP BY ubigeo, partido_id
+                    """
+                )
+                conn.execute("DROP TABLE IF EXISTS sv_agg_distrito")
+                conn.execute("ALTER TABLE sv_agg_distrito_new RENAME TO sv_agg_distrito")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_sv_agg_distrito_ubigeo ON sv_agg_distrito (ubigeo)")
+
+                conn.execute("DROP TABLE IF EXISTS sv_agg_ciudad_new")
+                conn.execute(
+                    """CREATE TABLE sv_agg_ciudad_new (
+                        ubigeo TEXT NOT NULL,
+                        ciudad TEXT NOT NULL,
+                        partido_id TEXT NOT NULL,
+                        nombre_candidato TEXT,
+                        votos INTEGER,
+                        total_mesas INTEGER,
+                        mesas_contabilizadas INTEGER,
+                        rebuilt_at TEXT NOT NULL,
+                        PRIMARY KEY (ubigeo, ciudad, partido_id)
+                    )"""
+                )
+                conn.execute(
+                    f"""
+                    INSERT INTO sv_agg_ciudad_new
+                    (ubigeo, ciudad, partido_id, nombre_candidato, votos, total_mesas, mesas_contabilizadas, rebuilt_at)
+                    SELECT
+                        ubigeo,
+                        ciudad,
+                        partido_id,
+                        MAX(nombre_candidato) AS nombre_candidato,
+                        SUM(votos) AS votos,
+                        COUNT(DISTINCT codigo_mesa) AS total_mesas,
+                        COUNT(DISTINCT CASE WHEN codigo_estado_acta='C' THEN codigo_mesa END) AS mesas_contabilizadas,
+                        '{now}' AS rebuilt_at
+                    FROM _sv_base
+                    WHERE partido_id IS NOT NULL AND partido_id != '' AND ciudad != ''
+                    GROUP BY ubigeo, ciudad, partido_id
+                    """
+                )
+                conn.execute("DROP TABLE IF EXISTS sv_agg_ciudad")
+                conn.execute("ALTER TABLE sv_agg_ciudad_new RENAME TO sv_agg_ciudad")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_sv_agg_ciudad_ubigeo ON sv_agg_ciudad (ubigeo)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_sv_agg_ciudad_nombre ON sv_agg_ciudad (ciudad)")
+
+                n_dist = conn.execute("SELECT COUNT(*) AS c FROM sv_agg_distrito").fetchone()["c"]
+                n_city = conn.execute("SELECT COUNT(*) AS c FROM sv_agg_ciudad").fetchone()["c"]
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+
+        return {"distrito": int(n_dist), "ciudad": int(n_city)}
+
+    def get_mesa_sv_from_local(self, codigo_mesa: str) -> dict[str, Any] | None:
+        """Build SV mesa bundle from local tables."""
+        with self._connect() as conn:
+            mesa_row = conn.execute(
+                "SELECT * FROM mesas_sv WHERE codigo_mesa = ?", (codigo_mesa,)
+            ).fetchone()
+            if mesa_row is None:
+                return None
+
+            votos_rows = conn.execute(
+                """SELECT v.partido_id, COALESCE(a.nombre,'') AS nombre_partido, v.votos
+                   FROM votos_sv v
+                   LEFT JOIN agrupaciones_sv a ON a.partido_id = v.partido_id
+                   WHERE v.codigo_mesa = ?
+                   ORDER BY v.votos DESC""",
+                (codigo_mesa,),
+            ).fetchall()
+
+            ub = str(mesa_row["id_ubigeo"] or "")
+            loc_row = conn.execute(
+                "SELECT departamento, provincia, distrito, ciudad FROM ubicaciones_sv WHERE ubigeo = ?",
+                (ub,),
+            ).fetchone()
+
+        mesa_data: dict[str, Any] = {
+            "codigo_mesa": codigo_mesa,
+            "ubigeo": ub,
+            "nombre_local": str(mesa_row["nombre_local"] or ""),
+            "electores_habiles": int(mesa_row["electores_habiles"] or 0),
+            "votos_emitidos": int(mesa_row["votos_emitidos"] or 0),
+            "votos_validos": int(mesa_row["votos_validos"] or 0),
+            "codigo_estado_acta": str(mesa_row["codigo_estado_acta"] or ""),
+            "id_eleccion": 10,
+        }
+        if loc_row:
+            mesa_data.update({
+                "departamento": str(loc_row["departamento"] or ""),
+                "provincia": str(loc_row["provincia"] or ""),
+                "distrito": str(loc_row["distrito"] or ""),
+                "ciudad": str(loc_row["ciudad"] or ""),
+            })
+
+        votos = [
+            {"partido_id": str(r["partido_id"]), "nombre_partido": str(r["nombre_partido"]), "votos": int(r["votos"] or 0)}
+            for r in votos_rows
+        ]
+
+        return {
+            "codigo_mesa": codigo_mesa,
+            "found": True,
+            "mesa_data": mesa_data,
+            "agrupaciones": [{"partido_id": v["partido_id"], "nombre": v["nombre_partido"]} for v in votos],
+            "votos": votos,
+            "source": "local_db_sv",
+            "id_eleccion": 10,
+        }
+
+    def query_sv_nacional(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT partido_id, nombre_candidato, nombre_agrupacion, votos_validos,
+                   pct_votos_validos, pct_votos_emitidos, actas_contabilizadas_pct,
+                   contabilizadas, total_actas, participacion_ciudadana, fecha_actualizacion
+                   FROM sv_resumen_nacional
+                   ORDER BY votos_validos DESC"""
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def query_sv_geo(self, nivel: str, ubigeo: str | None = None, nombre: str | None = None, top_n: int = 10) -> list[dict[str, Any]]:
+        """
+        Query SV results by geographic level.
+        nivel: 'nacional' | 'continente' | 'pais_exterior' | 'departamento' | 'provincia' | 'distrito' | 'ciudad'
+        """
+        with self._connect() as conn:
+            if nivel == "nacional":
+                rows = conn.execute(
+                    "SELECT partido_id, nombre_candidato, nombre_agrupacion, votos_validos, pct_votos_validos FROM sv_resumen_nacional ORDER BY votos_validos DESC"
+                ).fetchall()
+            elif nivel == "continente":
+                if ubigeo:
+                    rows = conn.execute(
+                        "SELECT ubigeo, partido_id, nombre_candidato, nombre_agrupacion, votos_validos, pct_votos_validos FROM sv_resumen_departamentos WHERE ubigeo = ? ORDER BY votos_validos DESC",
+                        (ubigeo,),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        "SELECT ubigeo, partido_id, nombre_candidato, nombre_agrupacion, votos_validos, pct_votos_validos FROM sv_resumen_departamentos WHERE CAST(ubigeo AS TEXT) >= '910000' ORDER BY ubigeo, votos_validos DESC"
+                    ).fetchall()
+            elif nivel == "departamento":
+                if ubigeo:
+                    rows = conn.execute(
+                        "SELECT ubigeo, partido_id, nombre_candidato, nombre_agrupacion, votos_validos, pct_votos_validos, total_votos_validos_geo FROM sv_resumen_departamentos WHERE ubigeo = ? ORDER BY votos_validos DESC",
+                        (ubigeo,),
+                    ).fetchall()
+                else:
+                    # Fetch with nombre_departamento for Python-side accent-insensitive filtering
+                    all_dept_rows = conn.execute(
+                        """SELECT d.ubigeo, d.partido_id, d.nombre_candidato, d.nombre_agrupacion,
+                                  d.votos_validos, d.pct_votos_validos,
+                                  COALESCE(c.nombre_departamento,'') AS nombre_departamento
+                           FROM sv_resumen_departamentos d
+                           LEFT JOIN sv_resumen_cobertura c ON c.ubigeo = d.ubigeo
+                           WHERE CAST(d.ubigeo AS TEXT) < '910000'
+                           ORDER BY d.ubigeo, d.votos_validos DESC
+                           LIMIT ?""",
+                        (top_n * 30,),
+                    ).fetchall()
+                    if nombre:
+                        norm_n = _norm_text(nombre)
+                        rows = [r for r in all_dept_rows if norm_n in _norm_text(str(r["nombre_departamento"] or ""))]
+                    else:
+                        rows = all_dept_rows
+            elif nivel == "provincia":
+                if ubigeo:
+                    rows = conn.execute(
+                        "SELECT ubigeo, partido_id, nombre_candidato, nombre_agrupacion, nombre_geo, votos_validos, pct_votos_validos FROM sv_resumen_provincias WHERE ubigeo = ? ORDER BY votos_validos DESC",
+                        (ubigeo,),
+                    ).fetchall()
+                elif nombre:
+                    rows = conn.execute(
+                        "SELECT ubigeo, partido_id, nombre_candidato, nombre_agrupacion, nombre_geo, votos_validos, pct_votos_validos FROM sv_resumen_provincias WHERE nombre_geo LIKE ? ORDER BY ubigeo, votos_validos DESC LIMIT ?",
+                        (f"%{nombre}%", top_n * 5),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        "SELECT ubigeo, partido_id, nombre_candidato, nombre_agrupacion, nombre_geo, votos_validos, pct_votos_validos FROM sv_resumen_provincias WHERE CAST(ubigeo AS TEXT) < '910000' ORDER BY ubigeo, votos_validos DESC LIMIT ?",
+                        (top_n * 5,),
+                    ).fetchall()
+            elif nivel == "pais_exterior":
+                if nombre:
+                    rows = conn.execute(
+                        "SELECT ubigeo, partido_id, nombre_candidato, nombre_agrupacion, nombre_geo, votos_validos, pct_votos_validos FROM sv_resumen_provincias WHERE CAST(ubigeo AS TEXT) >= '910000' AND nombre_geo LIKE ? ORDER BY votos_validos DESC",
+                        (f"%{nombre}%",),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        "SELECT ubigeo, partido_id, nombre_candidato, nombre_agrupacion, nombre_geo, votos_validos, pct_votos_validos FROM sv_resumen_provincias WHERE CAST(ubigeo AS TEXT) >= '910000' ORDER BY ubigeo, votos_validos DESC LIMIT ?",
+                        (top_n * 5,),
+                    ).fetchall()
+            elif nivel == "distrito":
+                if ubigeo:
+                    rows = conn.execute(
+                        "SELECT ubigeo, partido_id, nombre_candidato, votos, total_mesas, mesas_contabilizadas FROM sv_agg_distrito WHERE ubigeo = ? ORDER BY votos DESC",
+                        (ubigeo,),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        "SELECT ubigeo, partido_id, nombre_candidato, votos, total_mesas FROM sv_agg_distrito ORDER BY votos DESC LIMIT ?",
+                        (top_n * 3,),
+                    ).fetchall()
+            elif nivel == "ciudad":
+                if nombre:
+                    rows = conn.execute(
+                        "SELECT ubigeo, ciudad, partido_id, nombre_candidato, votos, total_mesas FROM sv_agg_ciudad WHERE ciudad LIKE ? ORDER BY votos DESC LIMIT ?",
+                        (f"%{nombre}%", top_n * 3),
+                    ).fetchall()
+                elif ubigeo:
+                    rows = conn.execute(
+                        "SELECT ubigeo, ciudad, partido_id, nombre_candidato, votos, total_mesas FROM sv_agg_ciudad WHERE ubigeo = ? ORDER BY votos DESC",
+                        (ubigeo,),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        "SELECT ubigeo, ciudad, partido_id, nombre_candidato, votos, total_mesas FROM sv_agg_ciudad ORDER BY votos DESC LIMIT ?",
+                        (top_n * 3,),
+                    ).fetchall()
+            else:
+                rows = []
+
+        return [dict(r) for r in rows]
+
+    def get_sv_cobertura(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT ubigeo, nombre_departamento, actas_contabilizadas, pct_actas_contabilizadas FROM sv_resumen_cobertura ORDER BY ubigeo"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_sv_reasignados(self, dpto: str | None = None, motivo: str | None = None) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            if dpto:
+                rows = conn.execute(
+                    "SELECT * FROM locales_reasignados_sv WHERE UPPER(dpto) LIKE ? ORDER BY nro",
+                    (f"%{dpto.upper()}%",),
+                ).fetchall()
+            elif motivo:
+                rows = conn.execute(
+                    "SELECT * FROM locales_reasignados_sv WHERE UPPER(motivo) LIKE ? ORDER BY nro",
+                    (f"%{motivo.upper()}%",),
+                ).fetchall()
+            else:
+                rows = conn.execute("SELECT * FROM locales_reasignados_sv ORDER BY nro").fetchall()
+        return [dict(r) for r in rows]
+
+    def total_mesas_sv_local(self) -> int:
+        with self._connect() as conn:
+            row = conn.execute("SELECT COUNT(*) AS c FROM mesas_sv").fetchone()
+        return int((row or {"c": 0})["c"])
+
+    def get_sv_estado_actas(
+        self,
+        ubigeo_prefix: str | None = None,
+        top_geo: int = 10,
+    ) -> dict[str, Any]:
+        """Resumen de estados de acta SV (C/E/P) y escenario "si JEE acepta todas las E".
+
+        - C = Contabilizada
+        - E = Para envío al JEE (observada)
+        - P = Pendiente (aún no procesada)
+
+        Args:
+            ubigeo_prefix: Filtra por prefijo de ubigeo (2 dígitos = departamento,
+                6 dígitos = distrito). None = nacional.
+            top_geo: Top departamentos a incluir en `geo_top_jee` (solo cuando no
+                se filtra por ubigeo). 0 desactiva el listado.
+
+        Returns dict con:
+            - totales: {mesas, contabilizadas_C, para_envio_jee_E, pendientes_P,
+                        electores_habiles, votos_emitidos}
+            - por_estado: lista [{codigo, descripcion, mesas, electores_habiles,
+                                  votos_emitidos, votos_validos}]
+            - votos_jee_pendientes: lista [{partido_id, nombre, votos}] (E)
+            - escenario_jee_aceptadas: {
+                actual: [{partido_id, nombre, votos, pct_validos}],
+                con_jee_aceptadas: [{partido_id, nombre, votos, pct_validos}],
+                margen_actual: {lider, ventaja, ventaja_pp},
+                margen_si_aceptadas: {lider, ventaja, ventaja_pp},
+              }
+            - geo_top_jee: top departamentos con mesas E (solo si no se filtra)
+            - fecha_actualizacion: timestamp ONPE de sv_resumen_nacional
+            - filtro: {ubigeo_prefix}
+        """
+        descripciones_estado = {
+            "C": "Contabilizada",
+            "E": "Para envío al JEE",
+            "P": "Pendiente",
+        }
+
+        like = None
+        if ubigeo_prefix:
+            ubigeo_prefix = str(ubigeo_prefix).strip()
+            if ubigeo_prefix:
+                like = f"{ubigeo_prefix}%"
+
+        with self._connect() as conn:
+            # 1) Conteos por estado
+            if like:
+                estado_rows = conn.execute(
+                    """SELECT codigo_estado_acta, COUNT(*) AS mesas,
+                       SUM(electores_habiles) AS electores_habiles,
+                       SUM(votos_emitidos) AS votos_emitidos,
+                       SUM(votos_validos) AS votos_validos
+                       FROM mesas_sv WHERE id_ubigeo LIKE ?
+                       GROUP BY codigo_estado_acta""",
+                    (like,),
+                ).fetchall()
+            else:
+                estado_rows = conn.execute(
+                    """SELECT codigo_estado_acta, COUNT(*) AS mesas,
+                       SUM(electores_habiles) AS electores_habiles,
+                       SUM(votos_emitidos) AS votos_emitidos,
+                       SUM(votos_validos) AS votos_validos
+                       FROM mesas_sv
+                       GROUP BY codigo_estado_acta"""
+                ).fetchall()
+
+            por_estado: list[dict[str, Any]] = []
+            por_codigo: dict[str, dict[str, int]] = {}
+            for r in estado_rows:
+                cod = str(r["codigo_estado_acta"] or "").strip().upper()
+                item = {
+                    "codigo": cod,
+                    "descripcion": descripciones_estado.get(cod, cod),
+                    "mesas": int(r["mesas"] or 0),
+                    "electores_habiles": int(r["electores_habiles"] or 0),
+                    "votos_emitidos": int(r["votos_emitidos"] or 0),
+                    "votos_validos": int(r["votos_validos"] or 0),
+                }
+                por_estado.append(item)
+                por_codigo[cod] = item
+
+            totales = {
+                "mesas": sum(it["mesas"] for it in por_estado),
+                "contabilizadas_C": por_codigo.get("C", {}).get("mesas", 0),
+                "para_envio_jee_E": por_codigo.get("E", {}).get("mesas", 0),
+                "pendientes_P": por_codigo.get("P", {}).get("mesas", 0),
+                "electores_habiles": sum(it["electores_habiles"] for it in por_estado),
+                "votos_emitidos": sum(it["votos_emitidos"] for it in por_estado),
+            }
+
+            # 2) Votos en mesas E por partido
+            if like:
+                jee_rows = conn.execute(
+                    """SELECT v.partido_id, COALESCE(a.nombre,'') AS nombre,
+                       SUM(v.votos) AS total_votos
+                       FROM votos_sv v
+                       JOIN mesas_sv m ON m.codigo_mesa = v.codigo_mesa
+                       LEFT JOIN agrupaciones_sv a ON a.partido_id = v.partido_id
+                       WHERE m.codigo_estado_acta = 'E' AND m.id_ubigeo LIKE ?
+                       GROUP BY v.partido_id
+                       ORDER BY total_votos DESC""",
+                    (like,),
+                ).fetchall()
+            else:
+                jee_rows = conn.execute(
+                    """SELECT v.partido_id, COALESCE(a.nombre,'') AS nombre,
+                       SUM(v.votos) AS total_votos
+                       FROM votos_sv v
+                       JOIN mesas_sv m ON m.codigo_mesa = v.codigo_mesa
+                       LEFT JOIN agrupaciones_sv a ON a.partido_id = v.partido_id
+                       WHERE m.codigo_estado_acta = 'E'
+                       GROUP BY v.partido_id
+                       ORDER BY total_votos DESC"""
+                ).fetchall()
+
+            votos_jee_pendientes = [
+                {
+                    "partido_id": str(r["partido_id"]),
+                    "nombre": str(r["nombre"] or ""),
+                    "votos": int(r["total_votos"] or 0),
+                }
+                for r in jee_rows
+            ]
+
+            # 3) Escenario actual (C) vs aceptadas (C+E) por partido
+            if like:
+                escenario_rows = conn.execute(
+                    """SELECT v.partido_id, COALESCE(a.nombre,'') AS nombre,
+                       SUM(CASE WHEN m.codigo_estado_acta='C' THEN v.votos ELSE 0 END) AS contabilizado,
+                       SUM(CASE WHEN m.codigo_estado_acta='E' THEN v.votos ELSE 0 END) AS jee_pendiente
+                       FROM votos_sv v
+                       JOIN mesas_sv m ON m.codigo_mesa = v.codigo_mesa
+                       LEFT JOIN agrupaciones_sv a ON a.partido_id = v.partido_id
+                       WHERE m.id_ubigeo LIKE ?
+                       GROUP BY v.partido_id""",
+                    (like,),
+                ).fetchall()
+            else:
+                escenario_rows = conn.execute(
+                    """SELECT v.partido_id, COALESCE(a.nombre,'') AS nombre,
+                       SUM(CASE WHEN m.codigo_estado_acta='C' THEN v.votos ELSE 0 END) AS contabilizado,
+                       SUM(CASE WHEN m.codigo_estado_acta='E' THEN v.votos ELSE 0 END) AS jee_pendiente
+                       FROM votos_sv v
+                       JOIN mesas_sv m ON m.codigo_mesa = v.codigo_mesa
+                       LEFT JOIN agrupaciones_sv a ON a.partido_id = v.partido_id
+                       GROUP BY v.partido_id"""
+                ).fetchall()
+
+            # 4) Top departamentos con mesas E (solo nacional)
+            geo_top_jee: list[dict[str, Any]] = []
+            if not like and top_geo and int(top_geo) > 0:
+                # Map de prefijo (2-3 dígitos) → nombre departamento/continente
+                dpto_name_map: dict[str, str] = {}
+                for r in conn.execute(
+                    "SELECT ubigeo, nombre_departamento FROM sv_resumen_cobertura"
+                ).fetchall():
+                    ub_raw = str(r["ubigeo"] or "")
+                    nombre_d = str(r["nombre_departamento"] or "")
+                    if not ub_raw:
+                        continue
+                    # Departamentos peruanos: 6 dígitos, prefijo 2 dígitos. Continentes
+                    # exterior (91-95): prefijo 2 dígitos también.
+                    dpto_name_map[ub_raw[:2]] = nombre_d
+
+                geo_rows = conn.execute(
+                    """SELECT SUBSTR(id_ubigeo,1,2) AS dpto,
+                       COUNT(*) AS mesas_E,
+                       SUM(electores_habiles) AS electores_E
+                       FROM mesas_sv WHERE codigo_estado_acta = 'E'
+                       GROUP BY dpto ORDER BY mesas_E DESC LIMIT ?""",
+                    (int(top_geo),),
+                ).fetchall()
+
+                # Votos E por departamento × partido finalista (8 Keiko, 10 Sánchez)
+                votos_dpto_rows = conn.execute(
+                    """SELECT SUBSTR(m.id_ubigeo,1,2) AS dpto, v.partido_id,
+                       SUM(v.votos) AS votos
+                       FROM votos_sv v
+                       JOIN mesas_sv m ON m.codigo_mesa = v.codigo_mesa
+                       WHERE m.codigo_estado_acta = 'E' AND v.partido_id IN ('8','10')
+                       GROUP BY dpto, v.partido_id"""
+                ).fetchall()
+                votos_dpto: dict[tuple[str, str], int] = {
+                    (str(r["dpto"]), str(r["partido_id"])): int(r["votos"] or 0)
+                    for r in votos_dpto_rows
+                }
+
+                for r in geo_rows:
+                    dpto = str(r["dpto"])
+                    geo_top_jee.append({
+                        "dpto_prefix": dpto,
+                        "nombre": dpto_name_map.get(dpto, ""),
+                        "mesas_E": int(r["mesas_E"] or 0),
+                        "electores_E": int(r["electores_E"] or 0),
+                        "votos_E_keiko": votos_dpto.get((dpto, "8"), 0),
+                        "votos_E_sanchez": votos_dpto.get((dpto, "10"), 0),
+                    })
+
+            # 5) Última fecha de actualización oficial ONPE
+            row_fa = conn.execute(
+                "SELECT MAX(fecha_actualizacion) AS f FROM sv_resumen_nacional"
+            ).fetchone()
+            fecha_actualizacion = str((row_fa or {"f": ""})["f"] or "")
+
+        # Construir escenario
+        actual: list[dict[str, Any]] = []
+        aceptadas: list[dict[str, Any]] = []
+        for r in escenario_rows:
+            pid = str(r["partido_id"])
+            nombre = str(r["nombre"] or "")
+            c = int(r["contabilizado"] or 0)
+            e = int(r["jee_pendiente"] or 0)
+            actual.append({"partido_id": pid, "nombre": nombre, "votos": c})
+            aceptadas.append({"partido_id": pid, "nombre": nombre, "votos": c + e})
+
+        # Solo candidatos (partido_id != 80/81/82) cuentan para % válidos
+        def _pct_validos(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            total_validos = sum(it["votos"] for it in rows if it["partido_id"] not in ("80", "81", "82"))
+            out = []
+            for it in rows:
+                if it["partido_id"] in ("80", "81", "82"):
+                    pct = 0.0
+                else:
+                    pct = round(it["votos"] / total_validos * 100, 3) if total_validos > 0 else 0.0
+                out.append({**it, "pct_validos": pct})
+            return sorted(out, key=lambda x: x["votos"], reverse=True)
+
+        actual_pct = _pct_validos(actual)
+        aceptadas_pct = _pct_validos(aceptadas)
+
+        def _margen(rows: list[dict[str, Any]]) -> dict[str, Any]:
+            candidatos = [r for r in rows if r["partido_id"] not in ("80", "81", "82")]
+            if len(candidatos) < 2:
+                return {"lider": None, "ventaja": 0, "ventaja_pp": 0.0}
+            primero, segundo = candidatos[0], candidatos[1]
+            return {
+                "lider": primero["partido_id"],
+                "lider_nombre": primero["nombre"],
+                "ventaja": primero["votos"] - segundo["votos"],
+                "ventaja_pp": round(primero["pct_validos"] - segundo["pct_validos"], 3),
+            }
+
+        return {
+            "filtro": {"ubigeo_prefix": ubigeo_prefix},
+            "fecha_actualizacion": fecha_actualizacion,
+            "totales": totales,
+            "por_estado": por_estado,
+            "votos_jee_pendientes": votos_jee_pendientes,
+            "escenario_jee_aceptadas": {
+                "actual": actual_pct,
+                "con_jee_aceptadas": aceptadas_pct,
+                "margen_actual": _margen(actual_pct),
+                "margen_si_aceptadas": _margen(aceptadas_pct),
+            },
+            "geo_top_jee": geo_top_jee,
+        }
+
+    def get_comparacion_mesa(self, codigo_mesa: str) -> dict[str, Any]:
+        """Compare 1V vs 2V results for the same mesa."""
+        with self._connect() as conn:
+            m1 = conn.execute("SELECT * FROM mesas_data WHERE codigo_mesa = ?", (codigo_mesa,)).fetchone()
+            v1 = conn.execute(
+                "SELECT v.partido_id, COALESCE(a.nombre,'') AS nombre, v.votos FROM votos v LEFT JOIN agrupaciones a ON a.partido_id = v.partido_id WHERE v.codigo_mesa = ? ORDER BY v.votos DESC",
+                (codigo_mesa,),
+            ).fetchall()
+            m2 = conn.execute("SELECT * FROM mesas_sv WHERE codigo_mesa = ?", (codigo_mesa,)).fetchone()
+            v2 = conn.execute(
+                "SELECT v.partido_id, COALESCE(a.nombre,'') AS nombre, v.votos FROM votos_sv v LEFT JOIN agrupaciones_sv a ON a.partido_id = v.partido_id WHERE v.codigo_mesa = ? ORDER BY v.votos DESC",
+                (codigo_mesa,),
+            ).fetchall()
+
+        result: dict[str, Any] = {
+            "codigo_mesa": codigo_mesa,
+            "primera_vuelta": None,
+            "segunda_vuelta": None,
+        }
+        if m1:
+            result["primera_vuelta"] = {
+                "electores_habiles": int(m1["electores_habiles"] or 0),
+                "votos_emitidos": int(m1["votos_emitidos"] or 0),
+                "votos_validos": int(m1["votos_validos"] or 0),
+                "estado_acta": str(m1["estado_acta"] or ""),
+                "votos": [{"partido_id": str(r["partido_id"]), "nombre": str(r["nombre"]), "votos": int(r["votos"] or 0)} for r in v1],
+            }
+        if m2:
+            result["segunda_vuelta"] = {
+                "electores_habiles": int(m2["electores_habiles"] or 0),
+                "votos_emitidos": int(m2["votos_emitidos"] or 0),
+                "votos_validos": int(m2["votos_validos"] or 0),
+                "codigo_estado_acta": str(m2["codigo_estado_acta"] or ""),
+                "votos": [{"partido_id": str(r["partido_id"]), "nombre": str(r["nombre"]), "votos": int(r["votos"] or 0)} for r in v2],
+            }
+        return result
+
+    def get_comparacion_geo(self, ubigeo_prefix: str) -> dict[str, Any]:
+        """Compare 1V vs 2V aggregates for a geo prefix.
+
+        Normalizes dept/province-level ubigeo codes so they match district-level
+        ubigeos stored in votos_by_ubigeo_partido and sv_agg_distrito:
+          '140000' → '14'  (Lima Metropolitana dept)
+          '040000' → '04'  (Arequipa dept)
+          '150100' → '1501' (Lima province)
+          '140110' → '140110' (specific district, unchanged)
+        """
+        # Normalize: strip trailing zeros for dept/province codes so LIKE
+        # matches district-level ubigeos (e.g., '14%' matches '140110')
+        raw = str(ubigeo_prefix or "").strip()
+        if len(raw) >= 6 and raw[2:] == "0000":       # dept code like '140000'
+            normalized = raw[:2]
+        elif len(raw) >= 6 and raw[4:] == "00" and raw[2:4] != "00":  # province like '150100'
+            normalized = raw[:4]
+        else:
+            normalized = raw                           # district or short prefix
+
+        # 1V mesas_data/votos_by_ubigeo_partido stores ubigeos with leading zeros stripped
+        # (ONPE internal format): '040101' → '40101', '100101' stays '100101'
+        # 2V mesas_sv/sv_resumen_provincias uses RENIEC 6-digit format with leading zeros
+        normalized_1v = normalized.lstrip("0") or normalized
+        with self._connect() as conn:
+            v1_rows = conn.execute(
+                """SELECT vup.partido_id, COALESCE(a.nombre,'') AS nombre, SUM(vup.total_votos) AS total_votos
+                   FROM votos_by_ubigeo_partido vup
+                   LEFT JOIN agrupaciones a ON a.partido_id = vup.partido_id
+                   WHERE vup.ubigeo LIKE ?
+                   GROUP BY vup.partido_id
+                   ORDER BY total_votos DESC""",
+                (f"{normalized_1v}%",),
+            ).fetchall()
+            m1_count = conn.execute(
+                "SELECT COUNT(*) AS c FROM mesas_data WHERE ubigeo LIKE ?",
+                (f"{normalized_1v}%",),
+            ).fetchone()["c"]
+
+            v2_rows = conn.execute(
+                """SELECT partido_id, COALESCE(nombre_candidato,'') AS nombre, SUM(votos_validos) AS total_votos
+                   FROM sv_resumen_provincias
+                   WHERE ubigeo LIKE ?
+                   GROUP BY partido_id
+                   ORDER BY total_votos DESC""",
+                (f"{normalized}%",),
+            ).fetchall()
+            if not v2_rows:
+                v2_rows = conn.execute(
+                    """SELECT partido_id, nombre_candidato AS nombre, SUM(votos) AS total_votos
+                       FROM sv_agg_distrito
+                       WHERE ubigeo LIKE ?
+                       GROUP BY partido_id
+                       ORDER BY total_votos DESC""",
+                    (f"{normalized}%",),
+                ).fetchall()
+            m2_count = conn.execute(
+                "SELECT COUNT(*) AS c FROM mesas_sv WHERE id_ubigeo LIKE ?",
+                (f"{normalized}%",),
+            ).fetchone()["c"]
+
+        return {
+            "ubigeo_prefix": ubigeo_prefix,
+            "primera_vuelta": {
+                "mesas": int(m1_count),
+                "votos": [{"partido_id": str(r["partido_id"]), "nombre": str(r["nombre"]), "total_votos": int(r["total_votos"] or 0)} for r in v1_rows],
+            },
+            "segunda_vuelta": {
+                "mesas": int(m2_count),
+                "votos": [{"partido_id": str(r["partido_id"]), "nombre": str(r["nombre"]), "total_votos": int(r["total_votos"] or 0)} for r in v2_rows],
+            },
+        }
+
+    def seed_transfer_map(self) -> int:
+        """Seed voto_transfer_map from TRANSFER_MAP in knowledge_base."""
+        from onpe_mcp.knowledge_base import TRANSFER_MAP
+
+        now = self.now_iso()
+        count = 0
+        with self._connect() as conn:
+            for nombre_norm, (pk, ps, pb, fuente) in TRANSFER_MAP.items():
+                conn.execute(
+                    """INSERT INTO voto_transfer_map (partido_nombre_norm, peso_keiko, peso_sanchez, peso_bn, fuente, loaded_at)
+                    VALUES (?,?,?,?,?,?)
+                    ON CONFLICT(partido_nombre_norm) DO UPDATE SET
+                        peso_keiko=excluded.peso_keiko, peso_sanchez=excluded.peso_sanchez,
+                        peso_bn=excluded.peso_bn, fuente=excluded.fuente, loaded_at=excluded.loaded_at""",
+                    (nombre_norm, pk, ps, pb, fuente, now),
+                )
+                count += 1
+        return count
+
+    def rebuild_proyeccion_sv(self) -> dict[str, Any]:
+        """Build proyeccion_sv_by_ubigeo using float accumulation + NNLS weights."""
+        from onpe_mcp.knowledge_base import get_transfer
+
+        now = self.now_iso()
+        with self._connect() as conn:
+            rows_1v = conn.execute(
+                """SELECT m.ubigeo, v.partido_id, COALESCE(a.nombre,'') AS nombre_partido, SUM(v.votos) AS votos
+                   FROM votos v
+                   JOIN mesas_data m ON m.codigo_mesa = v.codigo_mesa
+                   LEFT JOIN agrupaciones a ON a.partido_id = v.partido_id
+                   WHERE v.partido_id NOT IN ('80','81','82')
+                   GROUP BY m.ubigeo, v.partido_id""",
+            ).fetchall()
+
+        ubigeo_proj: dict[str, dict[str, float]] = {}
+        ubigeo_total: dict[str, int] = {}
+        for row in rows_1v:
+            ubigeo = str(row["ubigeo"] or "")
+            partido = str(row["nombre_partido"] or "")
+            votos = int(row["votos"] or 0)
+            pk, ps, pb, _ = get_transfer(partido)
+
+            if ubigeo not in ubigeo_proj:
+                ubigeo_proj[ubigeo] = {"keiko": 0.0, "sanchez": 0.0, "bn": 0.0, "total": 0.0}
+                ubigeo_total[ubigeo] = 0
+
+            ubigeo_proj[ubigeo]["keiko"] += votos * pk
+            ubigeo_proj[ubigeo]["sanchez"] += votos * ps
+            ubigeo_proj[ubigeo]["bn"] += votos * pb
+            ubigeo_proj[ubigeo]["total"] += votos
+            ubigeo_total[ubigeo] += votos
+
+        proj_rows = []
+        for ubigeo, proj in ubigeo_proj.items():
+            total = ubigeo_total[ubigeo]
+            pk_int = round(proj["keiko"])
+            ps_int = round(proj["sanchez"])
+            pb_int = round(proj["bn"])
+            abs_int = max(0, total - pk_int - ps_int - pb_int)
+            proj_rows.append((ubigeo, total, pk_int, ps_int, pb_int, abs_int, now))
+
+        with self._connect() as conn:
+            conn.execute("DELETE FROM proyeccion_sv_by_ubigeo")
+            conn.executemany(
+                """INSERT INTO proyeccion_sv_by_ubigeo
+                (ubigeo, votos_1v_total, votos_proyectados_keiko, votos_proyectados_sanchez,
+                 votos_proyectados_bn, votos_abstencion_estimada, rebuilt_at)
+                VALUES (?,?,?,?,?,?,?)""",
+                proj_rows,
+            )
+
+        return {"ubigeos_processed": len(proj_rows)}
+
+    def get_proyeccion_sv(self, ubigeo_prefix: str | None = None) -> list[dict[str, Any]]:
+        """Get transfer projection. If ubigeo_prefix given, filter. If None, aggregate nationally."""
+        with self._connect() as conn:
+            if ubigeo_prefix:
+                rows = conn.execute(
+                    """SELECT ubigeo, votos_1v_total, votos_proyectados_keiko, votos_proyectados_sanchez,
+                       votos_proyectados_bn, votos_abstencion_estimada FROM proyeccion_sv_by_ubigeo
+                       WHERE ubigeo LIKE ?""",
+                    (f"{ubigeo_prefix}%",),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """SELECT 'nacional' AS ubigeo,
+                       SUM(votos_1v_total) AS votos_1v_total,
+                       SUM(votos_proyectados_keiko) AS votos_proyectados_keiko,
+                       SUM(votos_proyectados_sanchez) AS votos_proyectados_sanchez,
+                       SUM(votos_proyectados_bn) AS votos_proyectados_bn,
+                       SUM(votos_abstencion_estimada) AS votos_abstencion_estimada
+                       FROM proyeccion_sv_by_ubigeo"""
+                ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_proyeccion_sv_by_mesa_prefix(
+        self,
+        mesa_prefix: str,
+        *,
+        top_partidos: int = 15,
+    ) -> dict[str, Any]:
+        """Calcula proyección 1V→2V para el bloque de mesas cuyo código empieza con `mesa_prefix`.
+
+        Aplica TRANSFER_MAP nacional (NNLS calibrado 86K mesas) a los votos 1V del bloque
+        y compara con los votos 2V observados. Útil para preguntas como
+        "transferencia en mesas 900K".
+
+        Args:
+            mesa_prefix: prefijo del código de mesa (ej: '9', '900', '9001'). Normalizado externamente.
+            top_partidos: número de partidos emisores 1V a detallar.
+
+        Returns:
+            dict con totales 1V/2V, predicción NNLS, error, breakdown por partido y notas.
+        """
+        from onpe_mcp.knowledge_base import get_transfer
+
+        prefix = str(mesa_prefix or "").strip()
+        if not prefix or not prefix.isdigit():
+            raise ValueError(f"mesa_prefix debe ser numérico no vacío, got {mesa_prefix!r}")
+
+        like = f"{prefix}%"
+
+        with self._connect() as conn:
+            # Totales 1V por partido en el bloque
+            rows_1v = conn.execute(
+                """SELECT a.partido_id, COALESCE(a.nombre,'') AS nombre, SUM(v.votos) AS total
+                   FROM votos v
+                   LEFT JOIN agrupaciones a ON a.partido_id = v.partido_id
+                   WHERE v.codigo_mesa LIKE ? AND v.votos IS NOT NULL
+                   GROUP BY a.partido_id, a.nombre
+                   HAVING total > 0
+                   ORDER BY total DESC""",
+                (like,),
+            ).fetchall()
+
+            # Cobertura del bloque en 1V
+            cov_1v = conn.execute(
+                """SELECT COUNT(*) AS mesas,
+                          COALESCE(SUM(electores_habiles),0) AS electores,
+                          COALESCE(SUM(votos_emitidos),0) AS emitidos,
+                          COALESCE(SUM(votos_validos),0) AS validos
+                   FROM mesas_data WHERE codigo_mesa LIKE ?""",
+                (like,),
+            ).fetchone()
+
+            # Observación 2V real
+            obs_2v = conn.execute(
+                """SELECT
+                     COALESCE(SUM(CASE WHEN partido_id='8'  THEN votos END),0) AS keiko,
+                     COALESCE(SUM(CASE WHEN partido_id='10' THEN votos END),0) AS sanchez,
+                     COALESCE(SUM(CASE WHEN partido_id='80' THEN votos END),0) AS blancos,
+                     COALESCE(SUM(CASE WHEN partido_id='81' THEN votos END),0) AS nulos
+                   FROM votos_sv WHERE codigo_mesa LIKE ?""",
+                (like,),
+            ).fetchone()
+
+            cov_2v = conn.execute(
+                """SELECT COUNT(*) AS mesas,
+                          COALESCE(SUM(electores_habiles),0) AS electores,
+                          COALESCE(SUM(votos_emitidos),0) AS emitidos
+                   FROM mesas_sv WHERE codigo_mesa LIKE ?""",
+                (like,),
+            ).fetchone()
+
+        # Aplicar TRANSFER_MAP nacional partido por partido
+        pred_keiko = 0.0
+        pred_sanchez = 0.0
+        pred_bn = 0.0
+        pred_abs = 0.0
+        breakdown: list[dict[str, Any]] = []
+        total_1v_pool = 0
+        for r in rows_1v:
+            nombre = str(r["nombre"] or "").strip()
+            votos = int(r["total"] or 0)
+            total_1v_pool += votos
+            pk, ps, pb, fuente = get_transfer(nombre or "DESCONOCIDO")
+            pa = max(0.0, 1.0 - pk - ps - pb)
+            vk = votos * pk
+            vs = votos * ps
+            vb = votos * pb
+            va = votos * pa
+            pred_keiko += vk
+            pred_sanchez += vs
+            pred_bn += vb
+            pred_abs += va
+            breakdown.append(
+                {
+                    "partido_id": str(r["partido_id"] or ""),
+                    "nombre": nombre,
+                    "votos_1v": votos,
+                    "pct_keiko": round(pk * 100, 1),
+                    "pct_sanchez": round(ps * 100, 1),
+                    "pct_bn": round(pb * 100, 1),
+                    "pct_abstencion": round(pa * 100, 1),
+                    "pred_keiko": round(vk),
+                    "pred_sanchez": round(vs),
+                    "pred_bn": round(vb),
+                    "pred_abstencion": round(va),
+                    "fuente": fuente,
+                }
+            )
+
+        keiko_obs = int(obs_2v["keiko"] or 0)
+        sanchez_obs = int(obs_2v["sanchez"] or 0)
+        blancos_obs = int(obs_2v["blancos"] or 0)
+        nulos_obs = int(obs_2v["nulos"] or 0)
+        pred_k_int = round(pred_keiko)
+        pred_s_int = round(pred_sanchez)
+
+        def _err_pct(pred: int, obs: int) -> float | None:
+            if obs == 0:
+                return None
+            return round((pred - obs) / obs * 100, 2)
+
+        breakdown.sort(key=lambda x: -int(x.get("votos_1v") or 0))
+
+        return {
+            "mesa_prefix": prefix,
+            "primera_vuelta": {
+                "mesas": int(cov_1v["mesas"] or 0),
+                "electores_habiles": int(cov_1v["electores"] or 0),
+                "votos_emitidos": int(cov_1v["emitidos"] or 0),
+                "votos_validos": int(cov_1v["validos"] or 0),
+                "pool_total_1v": total_1v_pool,
+            },
+            "segunda_vuelta_observada": {
+                "mesas": int(cov_2v["mesas"] or 0),
+                "electores_habiles": int(cov_2v["electores"] or 0),
+                "votos_emitidos": int(cov_2v["emitidos"] or 0),
+                "keiko": keiko_obs,
+                "sanchez": sanchez_obs,
+                "blancos": blancos_obs,
+                "nulos": nulos_obs,
+            },
+            "proyeccion_nnls_nacional": {
+                "keiko": pred_k_int,
+                "sanchez": pred_s_int,
+                "bn": round(pred_bn),
+                "abstencion": round(pred_abs),
+                "modelo": "NNLS calibrado 86,124 mesas (TRANSFER_MAP nacional)",
+            },
+            "error_modelo": {
+                "keiko_abs": pred_k_int - keiko_obs,
+                "sanchez_abs": pred_s_int - sanchez_obs,
+                "keiko_pct": _err_pct(pred_k_int, keiko_obs),
+                "sanchez_pct": _err_pct(pred_s_int, sanchez_obs),
+                "interpretacion": (
+                    "Error positivo: el modelo nacional sobreestima en este bloque. "
+                    "Error negativo: el modelo nacional subestima."
+                ),
+            },
+            "breakdown_partidos_top": breakdown[: max(0, int(top_partidos))],
+            "notas": [
+                "Las tasas de transferencia provienen del modelo NNLS nacional, no recalibradas para este bloque específico.",
+                "Para bloques con perfil rural/urbano distinto al promedio nacional (ej: mesas 900K), el modelo puede tener sesgo sistemático.",
+                "Compara `proyeccion_nnls_nacional` vs `segunda_vuelta_observada` para cuantificar el sesgo.",
+            ],
+        }
+
+    def bootstrap_segunda_vuelta(
+        self,
+        sv_output_dir: Path,
+        sv_resumen_dir: Path,
+        *,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        """Master bootstrap: loads all SV data. Idempotent (UPSERT). Returns stats."""
+        existing = self.total_mesas_sv_local()
+        if existing > 0 and not force:
+            return {"skipped": True, "mesas_sv": existing}
+
+        result: dict[str, Any] = {"skipped": False}
+        result["mesas_sv"] = self.bootstrap_sv_mesas(sv_output_dir)
+        result["votos_sv"] = self.bootstrap_sv_votos(sv_output_dir)
+        result["agrupaciones_sv"] = self.bootstrap_sv_agrupaciones(sv_output_dir)
+        result["ubicaciones_sv"] = self.bootstrap_sv_ubicaciones(sv_output_dir)
+        result["reasignados"] = self.bootstrap_sv_reasignados(sv_output_dir)
+        result["resumen"] = self.bootstrap_resumen_sv(sv_resumen_dir)
+        result["ctas"] = self.rebuild_sv_ctas_levels()
+        result["transfer_map_seeded"] = self.seed_transfer_map()
+        return result
+
+    def onpe_sv_refresh_from_scraper(
+        self,
+        sv_output_dir: Path,
+        sv_resumen_dir: Path,
+    ) -> dict[str, Any]:
+        """Incremental refresh: re-import all SV files (UPSERT). Returns change stats."""
+        result: dict[str, Any] = {}
+        result["mesas_sv"] = self.bootstrap_sv_mesas(sv_output_dir)
+        result["votos_sv"] = self.bootstrap_sv_votos(sv_output_dir)
+        result["agrupaciones_sv"] = self.bootstrap_sv_agrupaciones(sv_output_dir)
+        result["ubicaciones_sv"] = self.bootstrap_sv_ubicaciones(sv_output_dir)
+        result["reasignados"] = self.bootstrap_sv_reasignados(sv_output_dir)
+        result["resumen"] = self.bootstrap_resumen_sv(sv_resumen_dir)
+        result["ctas"] = self.rebuild_sv_ctas_levels()
+        return result

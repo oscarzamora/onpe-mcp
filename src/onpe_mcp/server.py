@@ -40,6 +40,12 @@ gateway = OnpeScraperGateway(settings)
 store = DataStore(settings.data_dir)
 onpe_api = OnpeApiClient()
 
+# Verificar si los datos SV están cargados
+try:
+    _sv_total = store.total_mesas_sv_local()
+except Exception:
+    _sv_total = 0
+
 try:
     gateway.ensure_ready()
 except GatewayError as exc:
@@ -612,6 +618,146 @@ def _auto_hydrate_mesas(mesa_codes: list[str], id_eleccion: int, timeout: int) -
     return hydrated
 
 
+def _resolve_sv_dpto_from_query(q: str) -> tuple[str, str] | None:
+    """Resuelve un departamento usando los ubigeos ONPE (no INEI) del scraper SV.
+
+    Lee `sv_resumen_cobertura` (que tiene `nombre_departamento` y `ubigeo` ONPE)
+    y matchea por palabra completa normalizada contra la query.
+
+    Returns (nombre_dpto, prefijo_2dig) o None.
+    """
+    try:
+        with store._connect() as conn:
+            rows = conn.execute(
+                "SELECT ubigeo, nombre_departamento FROM sv_resumen_cobertura WHERE nombre_departamento != ''"
+            ).fetchall()
+    except Exception:
+        return None
+    q_n = _norm(q)
+    best: tuple[str, str] | None = None
+    best_len = 0
+    for r in rows:
+        nm_raw = str(r["nombre_departamento"] or "").strip()
+        nm_norm = _norm(nm_raw)
+        if not nm_norm:
+            continue
+        if re.search(r"\b" + re.escape(nm_norm) + r"\b", q_n):
+            if len(nm_norm) > best_len:
+                best = (nm_raw, str(r["ubigeo"])[:2])
+                best_len = len(nm_norm)
+    return best
+
+
+def _detect_jee_intent(q: str, q_norm: str) -> dict[str, Any] | None:
+    """Detecta intent SV de actas observadas / envío al JEE / escenario "todas aceptadas".
+
+    Retorna dict listo para ok_response (con keys intent/answer/result/source) o
+    None si la query no aplica.
+    """
+    has_jee = bool(
+        "jee" in q_norm
+        or "jurado electoral especial" in q_norm
+        or "jurado electoral nacional" in q_norm
+        or re.search(r"\bact[ao]s?\s+observad", q_norm)
+        or re.search(r"\bmesa[s]?\s+observad", q_norm)
+        or re.search(r"\bact[ao]s?\s+(?:para\s+)?env[ií]o\b", q_norm)
+        or re.search(r"\bmesa[s]?\s+(?:para\s+)?env[ií]o\b", q_norm)
+        or re.search(
+            r"\b(?:si|cuando|que\s+pasa\s+si).{0,30}(?:acepta[a-z]*|aprueba[a-z]*|valid[a-z]+).{0,30}(?:todas|las|observad|jee|actas|mesas)\b",
+            q_norm,
+        )
+        or re.search(r"\bestado\s+de\s+(?:las\s+)?act[ao]s?\b", q_norm)
+        or re.search(r"\bestado\s+de\s+(?:las\s+)?mesa[s]?\b", q_norm)
+        or re.search(r"\bescenario\s+jee\b", q_norm)
+    )
+    if not has_jee:
+        return None
+
+    # Si total mesas SV == 0, indicar bootstrap pendiente
+    if store.total_mesas_sv_local() == 0:
+        return {
+            "intent": "sv_not_bootstrapped",
+            "answer": (
+                "⚠️ No hay datos de segunda vuelta en la base local. "
+                "Ejecuta **onpe_sv_bootstrap()** para cargar los datos."
+            ),
+        }
+
+    # Resolver filtro geográfico opcional (solo departamento)
+    ubigeo_prefix: str | None = None
+    geo_label = "nacional"
+    dept_match = _resolve_sv_dpto_from_query(q)
+    if dept_match:
+        geo_label, ubigeo_prefix = dept_match
+
+    result = store.get_sv_estado_actas(ubigeo_prefix=ubigeo_prefix, top_geo=10)
+    tot = result["totales"]
+    esc = result["escenario_jee_aceptadas"]
+    margen_a = esc["margen_si_aceptadas"]
+    margen_act = esc["margen_actual"]
+    pendientes_e = tot["para_envio_jee_E"]
+    pendientes_p = tot["pendientes_P"]
+    contab = tot["contabilizadas_C"]
+    mesas_tot = tot["mesas"]
+
+    # Generar respuesta legible
+    lines = [
+        f"**Estado de actas — segunda vuelta 2026** ({geo_label}):\n",
+        f"- **Contabilizadas (C):** {contab:,} mesas",
+        f"- **Para envío al JEE (E):** {pendientes_e:,} mesas observadas",
+    ]
+    if pendientes_p:
+        lines.append(f"- **Pendientes (P):** {pendientes_p:,} mesas")
+    lines.append(f"- **Total:** {mesas_tot:,} mesas")
+
+    if margen_a.get("lider") and margen_a.get("ventaja") is not None:
+        # Buscar nombres legibles del top 2
+        top2 = [r for r in esc["con_jee_aceptadas"] if r["partido_id"] not in ("80", "81", "82")][:2]
+        if len(top2) >= 2:
+            t0, t1 = top2[0], top2[1]
+            lines.append("")
+            lines.append('**Escenario "si el JEE acepta todas las observadas":**')
+            lines.append(
+                f"- {t0['nombre']}: {t0['votos']:,} ({t0['pct_validos']:.2f}%)"
+            )
+            lines.append(
+                f"- {t1['nombre']}: {t1['votos']:,} ({t1['pct_validos']:.2f}%)"
+            )
+            ventaja_a = margen_a["ventaja"]
+            ventaja_pp_a = margen_a["ventaja_pp"]
+            lider_nombre_a = margen_a.get("lider_nombre") or t0["nombre"]
+            lines.append(
+                f"- Margen proyectado: **+{ventaja_a:,} votos ({ventaja_pp_a:+.3f} pp)** a favor de {lider_nombre_a}."
+            )
+            if margen_act.get("lider") and margen_act.get("ventaja") is not None:
+                lines.append(
+                    f"  (Margen actual solo con C: {margen_act['ventaja']:+,} votos, "
+                    f"{margen_act['ventaja_pp']:+.3f} pp.)"
+                )
+
+    if not ubigeo_prefix and result.get("geo_top_jee"):
+        lines.append("")
+        lines.append("**Concentración de mesas observadas (top 5):**")
+        for g in result["geo_top_jee"][:5]:
+            nm = g.get("nombre") or g.get("dpto_prefix")
+            lines.append(
+                f"- {nm}: {g['mesas_E']:,} mesas ({g['electores_E']:,} electores)"
+            )
+
+    lines.append("")
+    lines.append(
+        "⚠️ Escenario teórico: el JEE puede anular, recontar o reasignar votos. "
+        "No es un pronóstico, solo la suma directa de lo ya reportado."
+    )
+
+    return {
+        "intent": "sv_estado_actas",
+        "answer": "\n".join(lines),
+        "result": result,
+        "source": "sqlite_sv",
+    }
+
+
 def _build_coverage_block(
     q_norm: str,
     id_eleccion: int,
@@ -984,6 +1130,335 @@ def onpe_bootstrap_atu_manera(
         return ok_response(result, started_ms=started_ms, meta={"source": "atu_manera_csv"})
     except Exception as exc:
         logger.exception("Error inesperado en onpe_bootstrap_atu_manera")
+        return error_response(str(exc), started_ms=started_ms)
+
+
+@mcp.tool()
+def onpe_sv_bootstrap(force: bool = False) -> dict[str, Any]:
+    """Importa todos los datos de segunda vuelta 2026 desde el scraper local hacia SQLite.
+
+    Carga mesas, votos, agrupaciones, ubicaciones, locales reasignados y resúmenes geográficos.
+    También calcula agregaciones CTAS (distrito, ciudad) y siembra el mapa de transferencia.
+    Si force=false y ya hay datos, solo retorna estadísticas.
+    """
+    started_ms = now_ms()
+    try:
+        result = store.bootstrap_segunda_vuelta(
+            sv_output_dir=settings.sv_output_dir,
+            sv_resumen_dir=settings.sv_resumen_dir,
+            force=bool(force),
+        )
+        store.append_raw_event("onpe_sv_bootstrap", result)
+        return ok_response(result, started_ms=started_ms)
+    except Exception as exc:
+        logger.exception("Error en onpe_sv_bootstrap")
+        return error_response(str(exc), started_ms=started_ms)
+
+
+@mcp.tool()
+def onpe_sv_refresh() -> dict[str, Any]:
+    """Recarga los datos de segunda vuelta desde el scraper local (incremental UPSERT).
+
+    Usar cuando el scraper ha actualizado sus archivos con nuevas mesas contabilizadas.
+    Hace UPSERT de todos los archivos y reconstruye las tablas CTAS (distrito, ciudad).
+    """
+    started_ms = now_ms()
+    try:
+        result = store.onpe_sv_refresh_from_scraper(
+            sv_output_dir=settings.sv_output_dir,
+            sv_resumen_dir=settings.sv_resumen_dir,
+        )
+        store.append_raw_event("onpe_sv_refresh", result)
+        return ok_response(result, started_ms=started_ms)
+    except Exception as exc:
+        logger.exception("Error en onpe_sv_refresh")
+        return error_response(str(exc), started_ms=started_ms)
+
+
+@mcp.tool()
+def onpe_sv_get_mesa(codigo_mesa: str) -> dict[str, Any]:
+    """Consulta una mesa de segunda vuelta 2026 desde el cache local.
+
+    Retorna cabecera, votos y ubicación de la mesa en segunda vuelta.
+    """
+    started_ms = now_ms()
+    try:
+        code = validate_mesa_code(codigo_mesa)
+        result = store.get_mesa_sv_from_local(code)
+        if result is None:
+            return error_response(
+                f"Mesa {code} no encontrada en cache local de segunda vuelta. "
+                "Ejecuta onpe_sv_bootstrap() primero.",
+                started_ms=started_ms,
+                code="NOT_FOUND",
+            )
+        return ok_response(result, started_ms=started_ms, meta={"source": "local_db_sv"})
+    except ValueError as exc:
+        return error_response(str(exc), started_ms=started_ms, code="VALIDATION_ERROR")
+    except Exception as exc:
+        logger.exception("Error en onpe_sv_get_mesa")
+        return error_response(str(exc), started_ms=started_ms)
+
+
+@mcp.tool()
+def onpe_sv_resultados_geo(
+    nivel: str = "nacional",
+    ubigeo: str | None = None,
+    nombre: str | None = None,
+    top_n: int = 10,
+) -> dict[str, Any]:
+    """Consulta resultados de segunda vuelta 2026 por nivel geográfico.
+
+    nivel: 'nacional' | 'departamento' | 'provincia' | 'distrito' | 'ciudad' | 'continente' | 'pais_exterior'
+    ubigeo: código de ubigeo (ej: '150000' para Lima)
+    nombre: nombre del departamento/provincia/ciudad/país (búsqueda parcial)
+    top_n: cantidad de resultados a retornar (default 10)
+    """
+    started_ms = now_ms()
+    try:
+        nivel = str(nivel or "nacional").lower().strip()
+        top_n = max(1, min(int(top_n), 50))
+        rows = store.query_sv_geo(nivel=nivel, ubigeo=ubigeo, nombre=nombre, top_n=top_n)
+        meta = {"nivel": nivel, "ubigeo": ubigeo, "nombre": nombre, "rows": len(rows)}
+        return ok_response({"nivel": nivel, "resultados": rows}, started_ms=started_ms, meta=meta)
+    except Exception as exc:
+        logger.exception("Error en onpe_sv_resultados_geo")
+        return error_response(str(exc), started_ms=started_ms)
+
+
+@mcp.tool()
+def onpe_sv_cobertura() -> dict[str, Any]:
+    """Retorna cobertura de actas contabilizadas por departamento en segunda vuelta 2026."""
+    started_ms = now_ms()
+    try:
+        rows = store.get_sv_cobertura()
+        total_depts = len(rows)
+        return ok_response(
+            {"total_departamentos": total_depts, "cobertura": rows},
+            started_ms=started_ms,
+        )
+    except Exception as exc:
+        logger.exception("Error en onpe_sv_cobertura")
+        return error_response(str(exc), started_ms=started_ms)
+
+
+@mcp.tool()
+def onpe_sv_reasignados(dpto: str | None = None, motivo: str | None = None) -> dict[str, Any]:
+    """Consulta locales de votación reasignados para segunda vuelta 2026.
+
+    Estos locales cambiaron por razones como reconstrucción, extorsión, etc.
+    Filtros opcionales: dpto (nombre del departamento), motivo (texto del motivo).
+    """
+    started_ms = now_ms()
+    try:
+        rows = store.get_sv_reasignados(dpto=dpto, motivo=motivo)
+        total_mesas = sum(int(r.get("mesas_afectadas", 0)) for r in rows)
+        return ok_response(
+            {
+                "total_locales": len(rows),
+                "total_mesas_afectadas": total_mesas,
+                "locales": rows,
+            },
+            started_ms=started_ms,
+        )
+    except Exception as exc:
+        logger.exception("Error en onpe_sv_reasignados")
+        return error_response(str(exc), started_ms=started_ms)
+
+
+@mcp.tool()
+def onpe_sv_estado_actas(
+    ubigeo_prefix: str | None = None,
+    top_geo: int = 10,
+) -> dict[str, Any]:
+    """Resumen de actas SV por estado (C/E/P) y escenario JEE-aceptadas.
+
+    Útil para responder: "¿cuántas mesas están para envío al JEE?",
+    "¿qué pasaría si el JEE acepta todas las observadas?", "¿dónde se concentran
+    las mesas observadas?".
+
+    Args:
+        ubigeo_prefix: filtra por prefijo de ubigeo (2 dígitos = departamento,
+            6 dígitos = distrito). None = nacional.
+        top_geo: cantidad de departamentos a mostrar en `geo_top_jee` (solo
+            cuando no se filtra por ubigeo). 0 desactiva el listado.
+
+    Devuelve:
+        - totales (mesas, contabilizadas_C, para_envio_jee_E, pendientes_P, ...)
+        - por_estado (lista con descripción de cada código de estado)
+        - votos_jee_pendientes (votos pre-contados en mesas E por partido)
+        - escenario_jee_aceptadas: comparativa "actual" vs "si JEE acepta todas
+          las E", con márgenes en votos y puntos porcentuales
+        - geo_top_jee (top departamentos con mesas observadas)
+        - fecha_actualizacion (timestamp ONPE oficial)
+    """
+    started_ms = now_ms()
+    try:
+        top_geo = max(0, min(int(top_geo or 0), 30))
+        result = store.get_sv_estado_actas(
+            ubigeo_prefix=ubigeo_prefix, top_geo=top_geo
+        )
+        store.append_raw_event("onpe_sv_estado_actas", {
+            "ubigeo_prefix": ubigeo_prefix,
+            "totales": result.get("totales"),
+        })
+        return ok_response(result, started_ms=started_ms)
+    except Exception as exc:
+        logger.exception("Error en onpe_sv_estado_actas")
+        return error_response(str(exc), started_ms=started_ms)
+
+
+@mcp.tool()
+def onpe_sv_comparacion_mesa(codigo_mesa: str) -> dict[str, Any]:
+    """Compara los resultados de primera vuelta vs segunda vuelta para la misma mesa.
+
+    Muestra electores habiles, votos emitidos, votos validos y resultados por partido en ambas vueltas.
+    """
+    started_ms = now_ms()
+    try:
+        code = validate_mesa_code(codigo_mesa)
+        result = store.get_comparacion_mesa(code)
+        if result["primera_vuelta"] is None and result["segunda_vuelta"] is None:
+            return error_response(
+                f"Mesa {code} no encontrada ni en primera ni en segunda vuelta.",
+                started_ms=started_ms,
+                code="NOT_FOUND",
+            )
+        return ok_response(result, started_ms=started_ms)
+    except ValueError as exc:
+        return error_response(str(exc), started_ms=started_ms, code="VALIDATION_ERROR")
+    except Exception as exc:
+        logger.exception("Error en onpe_sv_comparacion_mesa")
+        return error_response(str(exc), started_ms=started_ms)
+
+
+@mcp.tool()
+def onpe_sv_comparacion_geo(ubigeo_prefix: str) -> dict[str, Any]:
+    """Compara resultados primera vuelta vs segunda vuelta por prefijo de ubigeo.
+
+    Útil para comparar resultados al nivel de departamento (6 dígitos, ej: '150000'),
+    provincia (4 dígitos + '00', ej: '1501'), etc.
+    """
+    started_ms = now_ms()
+    try:
+        prefix = str(ubigeo_prefix or "").strip()
+        if not prefix:
+            raise ValueError("ubigeo_prefix no puede estar vacío")
+        result = store.get_comparacion_geo(prefix)
+        return ok_response(result, started_ms=started_ms)
+    except ValueError as exc:
+        return error_response(str(exc), started_ms=started_ms, code="VALIDATION_ERROR")
+    except Exception as exc:
+        logger.exception("Error en onpe_sv_comparacion_geo")
+        return error_response(str(exc), started_ms=started_ms)
+
+
+@mcp.tool()
+def onpe_sv_proyeccion_transferencia(
+    ubigeo_prefix: str | None = None,
+    mesa_prefix: str | None = None,
+) -> dict[str, Any]:
+    """Proyección de transferencia de votos de primera a segunda vuelta.
+
+    Usa el modelo NNLS calibrado (86,124 mesas) para estimar cómo los votos
+    de primera vuelta se distribuirían entre Keiko Fujimori y Roberto Sánchez.
+
+    Modos de filtrado (mutuamente exclusivos):
+      - ubigeo_prefix: filtra por ubigeo (ej: '150000' Lima).
+      - mesa_prefix:  filtra por prefijo del código de mesa (ej: '9', '900', '9001').
+                       Acepta shorthand '900K' / '9K' que se interpreta como
+                       el bloque cuyo primer dígito es 9 (mesas 900000-999999).
+                       Devuelve además observación 2V real y error del modelo.
+      - Sin ningún parámetro: proyección nacional agregada.
+
+    Nota: ~9% de abstención entre vueltas está incorporado en los pesos.
+    """
+    started_ms = now_ms()
+    try:
+        if ubigeo_prefix and mesa_prefix:
+            raise ValueError("Pasa solo uno de ubigeo_prefix o mesa_prefix, no ambos")
+
+        # Modo mesa_prefix: cálculo on-demand desde votos crudos
+        if mesa_prefix:
+            raw = str(mesa_prefix).strip()
+            if not raw:
+                raise ValueError("mesa_prefix no puede estar vacío")
+            # Normalización shorthand: 'NNNK' / 'NK' → primer dígito (bloque).
+            # Ej: '900K' → '9' (bloque 900000-999999). '700K' → '7'.
+            _k_match = re.fullmatch(r"(\d{1,4})\s*[kK]", raw)
+            if _k_match:
+                normalized = _k_match.group(1)[0]
+            else:
+                normalized = raw
+            if not normalized.isdigit():
+                raise ValueError(
+                    f"mesa_prefix debe ser numérico tras normalizar (recibido {raw!r} → {normalized!r}). "
+                    "Ejemplos válidos: '9', '900', '9001', '900000', '900K'."
+                )
+            result = store.get_proyeccion_sv_by_mesa_prefix(normalized)
+            pred = result["proyeccion_nnls_nacional"]
+            obs = result["segunda_vuelta_observada"]
+            err = result["error_modelo"]
+            pool = result["primera_vuelta"]["pool_total_1v"]
+            answer_lines = [
+                f"**Proyección 1V→2V para mesas con prefijo '{normalized}'** ({result['primera_vuelta']['mesas']:,} mesas, {result['primera_vuelta']['electores_habiles']:,} electores):",
+                "",
+                f"- Pool 1V total: {pool:,} votos",
+                f"- Predicción NNLS nacional: Keiko {pred['keiko']:,} | Sánchez {pred['sanchez']:,}",
+                f"- Observado 2V:             Keiko {obs['keiko']:,} | Sánchez {obs['sanchez']:,}",
+                (
+                    f"- Error modelo: Keiko {err['keiko_abs']:+,} ({err['keiko_pct']}%), "
+                    f"Sánchez {err['sanchez_abs']:+,} ({err['sanchez_pct']}%)"
+                ),
+            ]
+            return ok_response(
+                {
+                    "mesa_prefix": normalized,
+                    "raw_input": raw,
+                    "proyeccion": result,
+                    "answer": "\n".join(answer_lines),
+                },
+                started_ms=started_ms,
+            )
+
+        with store._connect() as _pconn:
+            _pcount = _pconn.execute("SELECT COUNT(*) AS c FROM proyeccion_sv_by_ubigeo").fetchone()["c"]
+        if _pcount == 0:
+            store.rebuild_proyeccion_sv()
+
+        rows = store.get_proyeccion_sv(ubigeo_prefix=ubigeo_prefix)
+        if not rows:
+            return ok_response(
+                {
+                    "ubigeo_prefix": ubigeo_prefix,
+                    "proyeccion": [],
+                    "message": "No hay datos de proyección. Ejecuta onpe_sv_bootstrap() y asegúrate de tener datos de primera vuelta.",
+                },
+                started_ms=started_ms,
+            )
+
+        if not ubigeo_prefix:
+            row = rows[0]
+            total = int(row.get("votos_1v_total") or 0)
+            pk = int(row.get("votos_proyectados_keiko") or 0)
+            ps = int(row.get("votos_proyectados_sanchez") or 0)
+            answer = (
+                f"Proyección nacional de transferencia de votos (modelo NNLS, 86K mesas):\n"
+                f"- Keiko Fujimori: {pk:,} votos proyectados ({pk/total*100:.1f}% del total 1V)\n"
+                f"- Roberto Sánchez: {ps:,} votos proyectados ({ps/total*100:.1f}%)\n"
+                f"- Blancos/nulos/abstención: {total-pk-ps:,} estimados"
+            ) if total > 0 else "Sin datos de primera vuelta para proyectar."
+        else:
+            answer = f"Proyección de transferencia para ubigeo_prefix='{ubigeo_prefix}': {len(rows)} ubigeos."
+
+        return ok_response(
+            {"ubigeo_prefix": ubigeo_prefix, "proyeccion": rows, "answer": answer},
+            started_ms=started_ms,
+        )
+    except ValueError as exc:
+        return error_response(str(exc), started_ms=started_ms, code="VALIDATION_ERROR")
+    except Exception as exc:
+        logger.exception("Error en onpe_sv_proyeccion_transferencia")
         return error_response(str(exc), started_ms=started_ms)
 
 
@@ -1391,6 +1866,234 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 10) -> dict[str,
         ).strip()
         q_norm = _norm(q)
         top_n = extract_top_n(q, default=5, minimum=1, maximum=20)
+        _has_sv_kw = any(kw in q_norm for kw in ("segunda vuelta", "segunda_vuelta", "2da vuelta"))
+        _has_reasignado_kw = any(kw in q_norm for kw in ("reasignad", "local reasignado", "reubicad", "huelga", "extorsion", "reconstruccion"))
+        _has_transfer_kw = any(kw in q_norm for kw in ("transferencia", "a donde fueron los votos", "proyeccion", "como se repartieron"))
+
+        # SV: actas observadas / envío al JEE / escenario "todas aceptadas"
+        _jee_data = _detect_jee_intent(q, q_norm)
+        if _jee_data is not None:
+            store.append_raw_event("onpe_chat_sv_estado_actas", {"query": q})
+            return ok_response(_jee_data, started_ms=started_ms)
+
+        if _has_reasignado_kw:
+            _sv_dpto = None
+            _dept_m = re.search(r"\b(?:en|de|del?)\s+([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñ]{2,30}?)(?:\s*$|\s+(?:por|motivo|debido))", q, re.IGNORECASE)
+            if _dept_m:
+                _sv_dpto = _dept_m.group(1).strip()
+            reasig = store.get_sv_reasignados(dpto=_sv_dpto)
+            total_mesas_afectadas = sum(int(r.get("mesas_afectadas", 0)) for r in reasig)
+            if reasig:
+                lines_r = [f"**{len(reasig)} locales reasignados** para segunda vuelta 2026 ({total_mesas_afectadas} mesas afectadas):\n"]
+                for r in reasig[:10]:
+                    lines_r.append(f"- {r['nombre_local_original']} → **{r['nombre_local_nuevo']}** ({r['dpto']}, {r['motivo']})")
+                if len(reasig) > 10:
+                    lines_r.append(f"... y {len(reasig)-10} más.")
+                answer_r = "\n".join(lines_r)
+            else:
+                answer_r = "No hay registros de locales reasignados en la base de datos. Ejecuta onpe_sv_bootstrap() primero."
+            data = {"intent": "sv_reasignados", "answer": answer_r, "result": {"total": len(reasig), "locales": reasig[:20]}, "source": "sqlite_sv"}
+            store.append_raw_event("onpe_chat_sv_reasignados", {"query": q})
+            return ok_response(data, started_ms=started_ms)
+
+        if mesa_match and (_has_sv_kw or re.search(r"\bcompar[ae]?\b", q_norm)):
+            _sv_code_raw = mesa_match.group(1)
+            try:
+                _sv_code = validate_mesa_code(_sv_code_raw)
+                comparacion = store.get_comparacion_mesa(_sv_code)
+                if comparacion["primera_vuelta"] or comparacion["segunda_vuelta"]:
+                    _p1 = comparacion.get("primera_vuelta") or {}
+                    _p2 = comparacion.get("segunda_vuelta") or {}
+                    lines_c = [f"**Mesa {_sv_code} — Comparación 1V vs 2V:**\n"]
+                    if _p1:
+                        ve1 = _p1.get("votos_emitidos", 0)
+                        lines_c.append(f"**Primera vuelta:** {ve1:,} votos emitidos")
+                        for v in (_p1.get("votos") or [])[:3]:
+                            lines_c.append(f"  • {v['nombre']}: {v['votos']:,}")
+                    if _p2:
+                        ve2 = _p2.get("votos_emitidos", 0)
+                        lines_c.append(f"**Segunda vuelta:** {ve2:,} votos emitidos")
+                        for v in (_p2.get("votos") or [])[:3]:
+                            lines_c.append(f"  • {v['nombre']}: {v['votos']:,}")
+                    data_c = {"intent": "sv_comparacion_mesa", "answer": "\n".join(lines_c), "result": comparacion, "source": "sqlite"}
+                    store.append_raw_event("onpe_chat_sv_comparacion_mesa", {"query": q, "codigo_mesa": _sv_code})
+                    return ok_response(data_c, started_ms=started_ms)
+            except ValueError:
+                pass
+
+        if _has_transfer_kw or (re.search(r"\bproyecci[oó]n\b", q_norm) and _has_sv_kw):
+            _proj_prefix = None
+            _geo_m = re.search(r"\b(?:en|para|de)\s+([A-Za-záéíóúñÁÉÍÓÚÑ]{3,})", q, re.IGNORECASE)
+            if _geo_m:
+                _geo_name = _geo_m.group(1).strip()
+                _dept_r = find_peru_department_prefix(_geo_name)
+                if _dept_r:
+                    _, _proj_prefix = _dept_r
+
+            with store._connect() as _pc:
+                _proj_exists = _pc.execute("SELECT COUNT(*) AS c FROM proyeccion_sv_by_ubigeo").fetchone()["c"]
+            if _proj_exists == 0:
+                store.rebuild_proyeccion_sv()
+
+            proj_rows = store.get_proyeccion_sv(_proj_prefix)
+            if proj_rows:
+                if not _proj_prefix:
+                    total_1v = sum(int(r.get("votos_1v_total", 0)) for r in proj_rows)
+                    total_pk = sum(int(r.get("votos_proyectados_keiko", 0)) for r in proj_rows)
+                    total_ps = sum(int(r.get("votos_proyectados_sanchez", 0)) for r in proj_rows)
+                    total_abs = sum(int(r.get("votos_abstencion_estimada", 0)) for r in proj_rows)
+                    answer_t = (
+                        f"**Proyección de transferencia de votos (modelo NNLS, ~86K mesas):**\n\n"
+                        f"De los {total_1v:,} votos válidos de primera vuelta:\n"
+                        f"- **Keiko Fujimori**: ~{total_pk:,} votos proyectados ({total_pk/total_1v*100:.1f}%)\n"
+                        f"- **Roberto Sánchez**: ~{total_ps:,} votos proyectados ({total_ps/total_1v*100:.1f}%)\n"
+                        f"- **Abstención estimada**: ~{total_abs:,} votos (~{total_abs/total_1v*100:.1f}%)\n\n"
+                        f"⚠️ Proyección basada en patrones electorales históricos. "
+                        f"Los resultados reales de segunda vuelta son los definitivos."
+                    ) if total_1v > 0 else "Sin datos de primera vuelta para proyectar."
+                else:
+                    answer_t = f"Proyección para el área consultada: {len(proj_rows)} ubigeos procesados."
+                data_t = {"intent": "sv_proyeccion_transferencia", "answer": answer_t, "result": {"rows": proj_rows[:50]}, "source": "sqlite"}
+                store.append_raw_event("onpe_chat_sv_proyeccion", {"query": q})
+                return ok_response(data_t, started_ms=started_ms)
+
+        if _has_sv_kw:
+            # J4: Cobertura de actas SV
+            if re.search(r"\bcobertura\b", q_norm):
+                rows_cob = store.get_sv_cobertura()
+                lines_cob = ["**Cobertura de actas — Segunda vuelta 2026:**\n"]
+                for r in rows_cob:
+                    nm = r.get("nombre_departamento", "")
+                    pct = float(r.get("pct_actas_contabilizadas", 0))
+                    c = int(r.get("actas_contabilizadas", 0))
+                    if nm:
+                        lines_cob.append(f"- {nm}: {pct:.1f}% ({c:,} actas)")
+                answer_cob = "\n".join(lines_cob)
+                data_cob = {"intent": "sv_cobertura", "answer": answer_cob, "result": rows_cob, "source": "sqlite_sv"}
+                store.append_raw_event("onpe_chat_sv_cobertura", {"query": q})
+                return ok_response(data_cob, started_ms=started_ms)
+
+            _sv_ubigeo = None
+            _sv_nombre = None
+            _sv_nivel = "nacional"
+
+            # J7: Geo comparison (1V vs 2V) — "compara Lima primera y segunda vuelta"
+            _has_compar_geo_kw = bool(
+                re.search(r"\bcompar[ae]?\b", q_norm) or ("primera" in q_norm and "segunda" in q_norm)
+            )
+            if _has_compar_geo_kw:
+                _comp_dept_match = find_peru_department_prefix(q)
+                if _comp_dept_match:
+                    _comp_name, _comp_prefix = _comp_dept_match
+                    _comp_ubigeo = _comp_prefix + "0000"
+                    comp = store.get_comparacion_geo(_comp_ubigeo)
+                    if comp["primera_vuelta"]["mesas"] > 0 or comp["segunda_vuelta"]["mesas"] > 0:
+                        v1 = comp["primera_vuelta"]["votos"]
+                        v2 = comp["segunda_vuelta"]["votos"]
+                        m1 = comp["primera_vuelta"]["mesas"]
+                        m2 = comp["segunda_vuelta"]["mesas"]
+                        lines_comp = [f"**Comparación 1V vs 2V — {_comp_name.title()}:**\n"]
+                        lines_comp.append(f"Primera vuelta: {m1:,} mesas")
+                        for v in v1[:4]:
+                            lines_comp.append(f"  • {v.get('nombre') or v.get('partido_id','?')}: {int(v.get('total_votos',0)):,}")
+                        lines_comp.append(f"\nSegunda vuelta: {m2:,} mesas")
+                        for v in v2[:4]:
+                            lines_comp.append(f"  • {v.get('nombre') or v.get('partido_id','?')}: {int(v.get('total_votos',0)):,}")
+                        answer_comp = "\n".join(lines_comp)
+                        data_comp = {"intent": "sv_comparacion_geo", "answer": answer_comp, "result": comp, "source": "sqlite"}
+                        store.append_raw_event("onpe_chat_sv_comparacion_geo", {"query": q})
+                        return ok_response(data_comp, started_ms=started_ms)
+
+            # Geo resolution: dept → exterior country → Peru district
+            _sv_dept_match = find_peru_department_prefix(q)
+            if _sv_dept_match:
+                _sv_dept_name, _sv_dept_prefix = _sv_dept_match
+                _sv_ubigeo = _sv_dept_prefix + "0000"
+                _sv_nivel = "departamento"
+                _sv_nombre = _sv_dept_name
+            else:
+                # J8: Exterior country/city (e.g. "Argelia segunda vuelta")
+                # Use extract_foreign_geo_candidates to strip stopwords and find country tokens.
+                # Guard: skip candidates <4 chars (e.g. "van" → Vancouver false-positive)
+                # and candidates that are purely electoral vocabulary.
+                _SV_ELECTION_VOCAB = {
+                    "segunda", "vuelta", "candidato", "candidatos", "votos", "voto",
+                    "resultado", "resultados", "primera", "2da", "eleccion", "elecciones",
+                }
+                _sv_foreign_hits: list[dict] = []
+                for _fld, _fval in extract_foreign_geo_candidates(q):
+                    _cand_tokens = [t for t in _fval.split() if t]
+                    # Skip if too short to be a country/city name
+                    if len(_fval.strip()) < 4:
+                        continue
+                    # Skip if all tokens are electoral vocabulary
+                    if _cand_tokens and all(t in _SV_ELECTION_VOCAB for t in _cand_tokens):
+                        continue
+                    _hits = store.find_foreign_ubigeos(_fval, _fld)
+                    if _hits:
+                        _sv_foreign_hits = _hits
+                        break
+                if _sv_foreign_hits:
+                    _sv_foreign_pais = str(_sv_foreign_hits[0].get("pais", "")).strip()
+                    if _sv_foreign_pais:
+                        _sv_nivel = "pais_exterior"
+                        _sv_nombre = _sv_foreign_pais
+                else:
+                    # J3: Peru district/city (e.g. "San Isidro segunda vuelta")
+                    _sv_district_match = store.find_domestic_ubigeos_by_geo_name(q)
+                    if _sv_district_match and _sv_district_match[1]:
+                        _sv_nombre, _sv_ubigeos_list = _sv_district_match
+                        _sv_ubigeo = str(_sv_ubigeos_list[0]).zfill(6)
+                        _sv_nivel = "distrito"
+
+            sv_rows = store.query_sv_geo(nivel=_sv_nivel, ubigeo=_sv_ubigeo, nombre=_sv_nombre, top_n=top_n)
+            if sv_rows:
+                geo_label = _sv_nombre or "nivel nacional"
+                lines_sv = [f"**Resultados de segunda vuelta 2026** — {geo_label}:\n"]
+                candidatos_sv = [r for r in sv_rows if str(r.get("partido_id", "")) not in ("80", "81", "82")]
+                others_sv = [r for r in sv_rows if str(r.get("partido_id", "")) in ("80", "81", "82")]
+                for r in candidatos_sv[:top_n]:
+                    vv = int(r.get("votos_validos") or r.get("votos") or 0)
+                    pct = float(r.get("pct_votos_validos") or 0)
+                    nombre = str(r.get("nombre_candidato") or r.get("nombre_agrupacion") or "")
+                    lines_sv.append(f"- **{nombre}**: {vv:,} votos válidos ({pct:.2f}%)")
+                for r in others_sv[:2]:
+                    vv = int(r.get("votos_validos") or r.get("votos") or 0)
+                    nombre = str(r.get("nombre_candidato") or r.get("nombre_agrupacion") or "")
+                    lines_sv.append(f"  ({nombre}: {vv:,})")
+                nac_rows = store.query_sv_nacional()
+                if nac_rows:
+                    n0 = nac_rows[0]
+                    pct_actas = float(n0.get("actas_contabilizadas_pct") or 0)
+                    cont = int(n0.get("contabilizadas") or 0)
+                    total_a = int(n0.get("total_actas") or 0)
+                    lines_sv.append(f"\n📊 Cobertura: {pct_actas:.2f}% ({cont:,}/{total_a:,} actas)")
+                answer_sv = "\n".join(lines_sv)
+                _sv_intent = (
+                    "geo_exterior" if _sv_nivel in ("pais_exterior", "continente")
+                    else "geo_domestic" if _sv_nivel in ("departamento", "provincia", "distrito", "ciudad")
+                    else "nacional"
+                )
+                data_sv = {
+                    "intent": _sv_intent,
+                    "answer": answer_sv,
+                    "result": {"nivel": _sv_nivel, "ubigeo": _sv_ubigeo, "resultados": sv_rows},
+                    "source": "sqlite_sv",
+                }
+                store.append_raw_event("onpe_chat_sv_geo", {"query": q, "nivel": _sv_nivel})
+                return ok_response(data_sv, started_ms=started_ms)
+            sv_total = store.total_mesas_sv_local()
+            if sv_total == 0:
+                return ok_response(
+                    {
+                        "intent": "sv_not_bootstrapped",
+                        "answer": (
+                            "⚠️ No hay datos de segunda vuelta en la base de datos local. "
+                            "Ejecuta **onpe_sv_bootstrap()** para cargar los datos."
+                        ),
+                    },
+                    started_ms=started_ms,
+                )
 
         # Intención 0: legislativo (diputados/senadores/escaños/congresistas) más votado por distrito
         if ("diputad" in q_norm or "senador" in q_norm or "congresista" in q_norm
@@ -1999,6 +2702,54 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 10) -> dict[str,
                     "data_tier": "tier_1_local_cache",
                 }
                 return ok_response(data, started_ms=started_ms)
+
+            # Tier 1c: código redondo (ej. "900000", "150000") → tratar como bloque/prefijo
+            # Las mesas 900000–999999 son el bloque 9xxxxx (arrancando con 9, domésticas).
+            # Strippear ceros finales: '900000' → '9', '150000' → '15', '912000' → '912'
+            if code.endswith("000"):
+                _block_prefix = code.rstrip("0") or code[0]
+                _block_desc = store.describe_mesa_prefix(_block_prefix)
+                _block_total = int(_block_desc.get("total_mesas") or 0)
+                if _block_total > 0:
+                    coverage = _build_coverage_block(q_norm, id_eleccion, timeout, prefix=_block_prefix)
+                    context_notes = get_context_notes(q_norm, _block_prefix)
+                    top_candidates = store.get_top_candidates_for_prefix(_block_prefix, top_n=5)
+                    display_label = f"mesas {_block_prefix}K" if _block_prefix.isdigit() else f"mesas {code}"
+                    ve = coverage["votos_emitidos"]
+                    vv = coverage["votos_validos"]
+                    pct = coverage["coverage_pct"]
+                    verdict = coverage["verdict"]
+                    answer_block = (
+                        f"## ✅ Las {display_label} SÍ existen — datos cache local ONPE\n\n"
+                        f"| Indicador | Dato |\n|-----------|------|\n"
+                        f"| Total mesas | **{_block_total:,}** |\n"
+                        f"| Con votos registrados | {coverage.get('mesas_con_votos',0):,} |\n"
+                        f"| Cobertura | {pct:.1f}% ({verdict}) |\n"
+                        f"| Votos emitidos | {ve:,} |\n"
+                        f"| Votos válidos | {vv:,} |\n"
+                    )
+                    if top_candidates:
+                        answer_block += "\n**Top candidatos:**\n"
+                        total_tc = sum(int(c.get("total_votos", 0)) for c in top_candidates)
+                        for i, c in enumerate(top_candidates[:5], 1):
+                            pct_c = int(c.get("total_votos", 0)) / total_tc * 100 if total_tc else 0
+                            answer_block += f"{i}. {c.get('nombre_partido', c.get('partido_id', '?'))} — {int(c.get('total_votos', 0)):,} ({pct_c:.1f}%)\n"
+                    if context_notes:
+                        answer_block += f"\n> {context_notes}"
+                    data = {
+                        "intent": "range_existence_verify",
+                        "answer": answer_block,
+                        "result": {
+                            "prefix": _block_prefix,
+                            "description": _block_desc,
+                            "coverage": coverage,
+                            "top_candidates": top_candidates,
+                        },
+                        "source": "sqlite",
+                        "data_tier": "tier_1_local_cache",
+                    }
+                    store.append_raw_event("onpe_chat_mesa_block", {"query": q, "prefix": _block_prefix, "total": _block_total})
+                    return ok_response(data, started_ms=started_ms)
 
             # Tier 2: Live API — wrapped para siempre devolver intent="mesa"
             try:
@@ -3025,6 +3776,240 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 10) -> dict[str,
             store.append_raw_event("onpe_chat_geo", {"query": q, "ubigeos": len(ubigeos), "mesas": mesas_count})
             return ok_response(data, started_ms=started_ms)
 
+        # ── Stage SV-1: Mesa de segunda vuelta ────────────────────────────
+        _SV_KEYWORDS = {"segunda vuelta", "segunda_vuelta", "2da vuelta", "2da_vuelta"}
+        _has_sv_kw = any(kw in q_norm for kw in ("segunda vuelta", "segunda_vuelta", "2da vuelta"))
+        _has_reasignado_kw = any(kw in q_norm for kw in ("reasignad", "local reasignado", "reubicad", "huelga", "extorsion", "reconstruccion"))
+
+        # SV: actas observadas / envío al JEE / escenario "todas aceptadas"
+        _jee_data = _detect_jee_intent(q, q_norm)
+        if _jee_data is not None:
+            store.append_raw_event("onpe_chat_sv_estado_actas", {"query": q})
+            return ok_response(_jee_data, started_ms=started_ms)
+
+        # SV: reasignados
+        if _has_reasignado_kw:
+            _sv_dpto = None
+            _dept_m = re.search(r"\b(?:en|de|del?)\s+([A-Za-záéíóúñÁÉÍÓÚÑ][A-Za-z\sáéíóúñ]{2,30}?)(?:\s*$|\s+(?:por|motivo|debido))", q, re.IGNORECASE)
+            if _dept_m:
+                _sv_dpto = _dept_m.group(1).strip()
+            reasig = store.get_sv_reasignados(dpto=_sv_dpto)
+            total_mesas_afectadas = sum(int(r.get("mesas_afectadas", 0)) for r in reasig)
+            if reasig:
+                lines_r = [f"**{len(reasig)} locales reasignados** para segunda vuelta 2026 ({total_mesas_afectadas} mesas afectadas):\n"]
+                for r in reasig[:10]:
+                    lines_r.append(f"- {r['nombre_local_original']} → **{r['nombre_local_nuevo']}** ({r['dpto']}, {r['motivo']})")
+                if len(reasig) > 10:
+                    lines_r.append(f"... y {len(reasig)-10} más.")
+                answer_r = "\n".join(lines_r)
+            else:
+                answer_r = "No hay registros de locales reasignados en la base de datos. Ejecuta onpe_sv_bootstrap() primero."
+            data = {"intent": "sv_reasignados", "answer": answer_r, "result": {"total": len(reasig), "locales": reasig[:20]}, "source": "sqlite_sv"}
+            store.append_raw_event("onpe_chat_sv_reasignados", {"query": q})
+            return ok_response(data, started_ms=started_ms)
+
+        # SV: compare mesa
+        if mesa_match and (_has_sv_kw or re.search(r"\bcompar[ae]?\b", q_norm)):
+            _sv_code_raw = mesa_match.group(1)
+            try:
+                _sv_code = validate_mesa_code(_sv_code_raw)
+                comparacion = store.get_comparacion_mesa(_sv_code)
+                if comparacion["primera_vuelta"] or comparacion["segunda_vuelta"]:
+                    _p1 = comparacion.get("primera_vuelta") or {}
+                    _p2 = comparacion.get("segunda_vuelta") or {}
+                    lines_c = [f"**Mesa {_sv_code} — Comparación 1V vs 2V:**\n"]
+                    if _p1:
+                        ve1 = _p1.get("votos_emitidos", 0)
+                        lines_c.append(f"**Primera vuelta:** {ve1:,} votos emitidos")
+                        for v in (_p1.get("votos") or [])[:3]:
+                            lines_c.append(f"  • {v['nombre']}: {v['votos']:,}")
+                    if _p2:
+                        ve2 = _p2.get("votos_emitidos", 0)
+                        lines_c.append(f"**Segunda vuelta:** {ve2:,} votos emitidos")
+                        for v in (_p2.get("votos") or [])[:3]:
+                            lines_c.append(f"  • {v['nombre']}: {v['votos']:,}")
+                    data_c = {"intent": "sv_comparacion_mesa", "answer": "\n".join(lines_c), "result": comparacion, "source": "sqlite"}
+                    store.append_raw_event("onpe_chat_sv_comparacion_mesa", {"query": q, "codigo_mesa": _sv_code})
+                    return ok_response(data_c, started_ms=started_ms)
+            except ValueError:
+                pass
+
+        # SV: transfer/proyeccion
+        _TRANSFER_KW = {"transferencia", "transference", "a donde fueron", "votos de ", "proyeccion", "proyección"}
+        _has_transfer_kw = any(kw in q_norm for kw in ("transferencia", "a donde fueron los votos", "proyeccion", "como se repartieron"))
+        if _has_transfer_kw or (re.search(r"\bproyecci[oó]n\b", q_norm) and _has_sv_kw):
+            _proj_prefix = None
+            _geo_m = re.search(r"\b(?:en|para|de)\s+([A-Za-záéíóúñÁÉÍÓÚÑ]{3,})", q, re.IGNORECASE)
+            if _geo_m:
+                _geo_name = _geo_m.group(1).strip()
+                _dept_r = find_peru_department_prefix(_geo_name)
+                if _dept_r:
+                    _, _proj_prefix = _dept_r
+
+            with store._connect() as _pc:
+                _proj_exists = _pc.execute("SELECT COUNT(*) AS c FROM proyeccion_sv_by_ubigeo").fetchone()["c"]
+            if _proj_exists == 0:
+                store.rebuild_proyeccion_sv()
+
+            proj_rows = store.get_proyeccion_sv(_proj_prefix)
+            if proj_rows:
+                if not _proj_prefix and proj_rows:
+                    total_1v = sum(int(r.get("votos_1v_total", 0)) for r in proj_rows)
+                    total_pk = sum(int(r.get("votos_proyectados_keiko", 0)) for r in proj_rows)
+                    total_ps = sum(int(r.get("votos_proyectados_sanchez", 0)) for r in proj_rows)
+                    total_abs = sum(int(r.get("votos_abstencion_estimada", 0)) for r in proj_rows)
+                    answer_t = (
+                        f"**Proyección de transferencia de votos (modelo NNLS, ~86K mesas):**\n\n"
+                        f"De los {total_1v:,} votos válidos de primera vuelta:\n"
+                        f"- **Keiko Fujimori**: ~{total_pk:,} votos proyectados ({total_pk/total_1v*100:.1f}%)\n"
+                        f"- **Roberto Sánchez**: ~{total_ps:,} votos proyectados ({total_ps/total_1v*100:.1f}%)\n"
+                        f"- **Abstención estimada**: ~{total_abs:,} votos (~{total_abs/total_1v*100:.1f}%)\n\n"
+                        f"⚠️ Proyección basada en patrones electorales históricos. "
+                        f"Los resultados reales de segunda vuelta son los definitivos."
+                    ) if total_1v > 0 else "Sin datos de primera vuelta para proyectar."
+                else:
+                    answer_t = f"Proyección para el área consultada: {len(proj_rows)} ubigeos procesados."
+                data_t = {"intent": "sv_proyeccion_transferencia", "answer": answer_t, "result": {"rows": proj_rows[:50]}, "source": "sqlite"}
+                store.append_raw_event("onpe_chat_sv_proyeccion", {"query": q})
+                return ok_response(data_t, started_ms=started_ms)
+
+        # SV: resultados segunda vuelta (geo)
+        if _has_sv_kw:
+            # J4: Cobertura de actas SV
+            if re.search(r"\bcobertura\b", q_norm):
+                rows_cob = store.get_sv_cobertura()
+                lines_cob = ["**Cobertura de actas — Segunda vuelta 2026:**\n"]
+                for r in rows_cob:
+                    nm = r.get("nombre_departamento", "")
+                    pct = float(r.get("pct_actas_contabilizadas", 0))
+                    c = int(r.get("actas_contabilizadas", 0))
+                    if nm:
+                        lines_cob.append(f"- {nm}: {pct:.1f}% ({c:,} actas)")
+                answer_cob = "\n".join(lines_cob)
+                data_cob = {"intent": "sv_cobertura", "answer": answer_cob, "result": rows_cob, "source": "sqlite_sv"}
+                store.append_raw_event("onpe_chat_sv_cobertura", {"query": q})
+                return ok_response(data_cob, started_ms=started_ms)
+
+            _sv_ubigeo = None
+            _sv_nombre = None
+            _sv_nivel = "nacional"
+
+            # J7: Geo comparison (1V vs 2V) — "compara Lima primera y segunda vuelta"
+            _has_compar_geo_kw = bool(
+                re.search(r"\bcompar[ae]?\b", q_norm) or ("primera" in q_norm and "segunda" in q_norm)
+            )
+            if _has_compar_geo_kw:
+                _comp_dept_match = find_peru_department_prefix(q)
+                if _comp_dept_match:
+                    _comp_name, _comp_prefix = _comp_dept_match
+                    _comp_ubigeo = _comp_prefix + "0000"
+                    comp = store.get_comparacion_geo(_comp_ubigeo)
+                    if comp["primera_vuelta"]["mesas"] > 0 or comp["segunda_vuelta"]["mesas"] > 0:
+                        v1 = comp["primera_vuelta"]["votos"]
+                        v2 = comp["segunda_vuelta"]["votos"]
+                        m1 = comp["primera_vuelta"]["mesas"]
+                        m2 = comp["segunda_vuelta"]["mesas"]
+                        lines_comp = [f"**Comparación 1V vs 2V — {_comp_name.title()}:**\n"]
+                        lines_comp.append(f"Primera vuelta: {m1:,} mesas")
+                        for v in v1[:4]:
+                            lines_comp.append(f"  • {v.get('nombre') or v.get('partido_id','?')}: {int(v.get('total_votos',0)):,}")
+                        lines_comp.append(f"\nSegunda vuelta: {m2:,} mesas")
+                        for v in v2[:4]:
+                            lines_comp.append(f"  • {v.get('nombre') or v.get('partido_id','?')}: {int(v.get('total_votos',0)):,}")
+                        answer_comp = "\n".join(lines_comp)
+                        data_comp = {"intent": "sv_comparacion_geo", "answer": answer_comp, "result": comp, "source": "sqlite"}
+                        store.append_raw_event("onpe_chat_sv_comparacion_geo", {"query": q})
+                        return ok_response(data_comp, started_ms=started_ms)
+
+            # Geo resolution: dept → exterior country → Peru district
+            _sv_dept_match = find_peru_department_prefix(q)
+            if _sv_dept_match:
+                _sv_dept_name, _sv_dept_prefix = _sv_dept_match
+                _sv_ubigeo = _sv_dept_prefix + "0000"
+                _sv_nivel = "departamento"
+                _sv_nombre = _sv_dept_name
+            else:
+                # J8: Exterior country/city (e.g. "Argelia segunda vuelta")
+                # Guard: skip candidates <4 chars and purely electoral vocabulary.
+                _SV_ELECTION_VOCAB2 = {
+                    "segunda", "vuelta", "candidato", "candidatos", "votos", "voto",
+                    "resultado", "resultados", "primera", "2da", "eleccion", "elecciones",
+                }
+                _sv_foreign_hits2: list[dict] = []
+                for _fld2, _fval2 in extract_foreign_geo_candidates(q):
+                    _cand_tokens2 = [t for t in _fval2.split() if t]
+                    if len(_fval2.strip()) < 4:
+                        continue
+                    if _cand_tokens2 and all(t in _SV_ELECTION_VOCAB2 for t in _cand_tokens2):
+                        continue
+                    _hits2 = store.find_foreign_ubigeos(_fval2, _fld2)
+                    if _hits2:
+                        _sv_foreign_hits2 = _hits2
+                        break
+                if _sv_foreign_hits2:
+                    _sv_foreign_pais2 = str(_sv_foreign_hits2[0].get("pais", "")).strip()
+                    if _sv_foreign_pais2:
+                        _sv_nivel = "pais_exterior"
+                        _sv_nombre = _sv_foreign_pais2
+                else:
+                    # J3: Peru district/city (e.g. "San Isidro segunda vuelta")
+                    _sv_district_match = store.find_domestic_ubigeos_by_geo_name(q)
+                    if _sv_district_match and _sv_district_match[1]:
+                        _sv_nombre, _sv_ubigeos_list = _sv_district_match
+                        _sv_ubigeo = str(_sv_ubigeos_list[0]).zfill(6)
+                        _sv_nivel = "distrito"
+
+            sv_rows = store.query_sv_geo(nivel=_sv_nivel, ubigeo=_sv_ubigeo, nombre=_sv_nombre, top_n=top_n)
+
+            if sv_rows:
+                geo_label = _sv_nombre or "nivel nacional"
+                lines_sv = [f"**Resultados de segunda vuelta 2026** — {geo_label}:\n"]
+                candidatos_sv = [r for r in sv_rows if str(r.get("partido_id", "")) not in ("80", "81", "82")]
+                others_sv = [r for r in sv_rows if str(r.get("partido_id", "")) in ("80", "81", "82")]
+                for r in candidatos_sv[:top_n]:
+                    vv = int(r.get("votos_validos") or r.get("votos") or 0)
+                    pct = float(r.get("pct_votos_validos") or 0)
+                    nombre = str(r.get("nombre_candidato") or r.get("nombre_agrupacion") or "")
+                    lines_sv.append(f"- **{nombre}**: {vv:,} votos válidos ({pct:.2f}%)")
+                for r in others_sv[:2]:
+                    vv = int(r.get("votos_validos") or r.get("votos") or 0)
+                    nombre = str(r.get("nombre_candidato") or r.get("nombre_agrupacion") or "")
+                    lines_sv.append(f"  ({nombre}: {vv:,})")
+                nac_rows = store.query_sv_nacional()
+                if nac_rows:
+                    n0 = nac_rows[0]
+                    pct_actas = float(n0.get("actas_contabilizadas_pct") or 0)
+                    cont = int(n0.get("contabilizadas") or 0)
+                    total_a = int(n0.get("total_actas") or 0)
+                    lines_sv.append(f"\n📊 Cobertura: {pct_actas:.2f}% ({cont:,}/{total_a:,} actas)")
+                answer_sv = "\n".join(lines_sv)
+                _sv_intent = (
+                    "geo_exterior" if _sv_nivel in ("pais_exterior", "continente")
+                    else "geo_domestic" if _sv_nivel in ("departamento", "provincia", "distrito", "ciudad")
+                    else "nacional"
+                )
+                data_sv = {
+                    "intent": _sv_intent,
+                    "answer": answer_sv,
+                    "result": {"nivel": _sv_nivel, "ubigeo": _sv_ubigeo, "resultados": sv_rows},
+                    "source": "sqlite_sv",
+                }
+                store.append_raw_event("onpe_chat_sv_geo", {"query": q, "nivel": _sv_nivel})
+                return ok_response(data_sv, started_ms=started_ms)
+            else:
+                sv_total = store.total_mesas_sv_local()
+                if sv_total == 0:
+                    return ok_response(
+                        {
+                            "intent": "sv_not_bootstrapped",
+                            "answer": (
+                                "⚠️ No hay datos de segunda vuelta en la base de datos local. "
+                                "Ejecuta **onpe_sv_bootstrap()** para cargar los datos."
+                            ),
+                        },
+                        started_ms=started_ms,
+                    )
+
         # Intención 1: candidato específico
         # Detecta tanto "candidato X" como "cuántos votos tuvo/sacó X", "votos de X", etc.
         # Los patrones están compilados a nivel de módulo (_CANDIDATE_VOTE_PATTERNS).
@@ -3202,6 +4187,45 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 10) -> dict[str,
                     "data_tier": "tier_1_local_cache",
                 }
                 return ok_response(data, started_ms=started_ms)
+
+            # Tier 1c: código redondo → bloque/prefijo (igual que el bloque principal)
+            # '900000' → prefix '9' (bloque 900000–999999), '150000' → '15', etc.
+            if code.endswith("000"):
+                _block_prefix2 = code.rstrip("0") or code[0]
+                _block_desc2 = store.describe_mesa_prefix(_block_prefix2)
+                _block_total2 = int(_block_desc2.get("total_mesas") or 0)
+                if _block_total2 > 0:
+                    coverage2 = _build_coverage_block(q_norm, id_eleccion, timeout, prefix=_block_prefix2)
+                    context_notes2 = get_context_notes(q_norm, _block_prefix2)
+                    top_cands2 = store.get_top_candidates_for_prefix(_block_prefix2, top_n=5)
+                    display_label2 = f"mesas {_block_prefix2}K" if _block_prefix2.isdigit() else f"mesas {code}"
+                    ve2 = coverage2["votos_emitidos"]
+                    pct2 = coverage2["coverage_pct"]
+                    verdict2 = coverage2["verdict"]
+                    ans2 = (
+                        f"## ✅ Las {display_label2} SÍ existen — datos cache local ONPE\n\n"
+                        f"| Indicador | Dato |\n|-----------|------|\n"
+                        f"| Total mesas | **{_block_total2:,}** |\n"
+                        f"| Cobertura | {pct2:.1f}% ({verdict2}) |\n"
+                        f"| Votos emitidos | {ve2:,} |\n"
+                    )
+                    if top_cands2:
+                        ans2 += "\n**Top candidatos:**\n"
+                        _tc2 = sum(int(c.get("total_votos", 0)) for c in top_cands2)
+                        for i2, c2 in enumerate(top_cands2[:5], 1):
+                            pct_c2 = int(c2.get("total_votos", 0)) / _tc2 * 100 if _tc2 else 0
+                            ans2 += f"{i2}. {c2.get('nombre_partido', '?')} — {int(c2.get('total_votos', 0)):,} ({pct_c2:.1f}%)\n"
+                    if context_notes2:
+                        ans2 += f"\n> {context_notes2}"
+                    data = {
+                        "intent": "range_existence_verify",
+                        "answer": ans2,
+                        "result": {"prefix": _block_prefix2, "description": _block_desc2, "coverage": coverage2},
+                        "source": "sqlite",
+                        "data_tier": "tier_1_local_cache",
+                    }
+                    store.append_raw_event("onpe_chat_mesa_block", {"query": q, "prefix": _block_prefix2})
+                    return ok_response(data, started_ms=started_ms)
 
             # Tier 2: Live API (mesa no está en DB local)
             try:

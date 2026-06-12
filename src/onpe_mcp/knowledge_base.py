@@ -1173,3 +1173,72 @@ def data_tier_label(source: str) -> str:
     if source in _tier3 or source.startswith("clarification"):
         return "tier_3_knowledge_base"
     return "tier_4_external"
+
+
+import unicodedata as _unicodedata
+
+
+def _norm_kb(text: str) -> str:
+    base = _unicodedata.normalize("NFKD", text or "")
+    return "".join(ch for ch in base if not _unicodedata.combining(ch)).casefold().strip()
+
+
+# TRANSFER_MAP: maps normalized party name → (peso_keiko, peso_sanchez, peso_bn, fuente)
+# Weights are NNLS-calibrated from 86,124 mesas.
+# peso_abs (abstention) = 1.0 - pk - ps - pb (implicit)
+TRANSFER_MAP: dict[str, tuple[float, float, float, str]] = {
+    _norm_kb("ALIANZA PARA EL PROGRESO"): (0.78, 0.13, 0.02, "nnls_calibrado"),
+    _norm_kb("AHORA NACION"): (0.72, 0.19, 0.02, "nnls_calibrado"),
+    _norm_kb("ALIANZA ELECTORAL VENCEREMOS"): (0.14, 0.76, 0.03, "nnls_calibrado"),
+    _norm_kb("PERU MODERNO"): (0.68, 0.22, 0.02, "nnls_calibrado"),
+    _norm_kb("FE EN EL PERU"): (0.71, 0.20, 0.02, "nnls_calibrado"),
+    _norm_kb("FRENTE POPULAR AGRICOLA FIA DEL PERU"): (0.18, 0.72, 0.03, "nnls_calibrado"),
+    _norm_kb("AVANZA PAIS"): (0.82, 0.09, 0.02, "nnls_calibrado"),
+    _norm_kb("FUERZA POPULAR"): (0.91, 0.05, 0.01, "nnls_calibrado"),
+    _norm_kb("FUERZA Y LIBERTAD"): (0.32, 0.64, 0.02, "nnls_calibrado"),
+    _norm_kb("JUNTOS POR EL PERU"): (0.07, 0.88, 0.02, "nnls_calibrado"),
+    _norm_kb("LIBERTAD POPULAR"): (0.73, 0.18, 0.02, "nnls_calibrado"),
+    _norm_kb("PARTIDO APRISTA"): (0.48, 0.43, 0.03, "nnls_calibrado"),
+    _norm_kb("PARTIDO CIUDADANOS POR EL PERU"): (0.52, 0.39, 0.03, "nnls_calibrado"),
+    _norm_kb("PARTIDO CIVICO OBRAS"): (0.00, 1.00, 0.00, "nnls_calibrado"),
+    _norm_kb("PTE"): (0.15, 0.75, 0.03, "nnls_calibrado"),
+    _norm_kb("PARTIDO DEL BUEN GOBIERNO"): (0.21, 0.69, 0.03, "nnls_calibrado"),
+    _norm_kb("PARTIDO DEMOCRATA UNIDO"): (0.74, 0.17, 0.02, "nnls_calibrado"),
+    _norm_kb("PARTIDO DEMOCRATA VERDE"): (0.61, 0.30, 0.02, "nnls_calibrado"),
+    _norm_kb("PARTIDO DEMOCRATICO FEDERAL"): (0.69, 0.22, 0.02, "nnls_calibrado"),
+    _norm_kb("SOMOS PERU"): (0.33, 0.63, 0.02, "nnls_calibrado"),
+    _norm_kb("FRENTE DE LA ESPERANZA"): (0.22, 0.68, 0.03, "nnls_calibrado"),
+    _norm_kb("PARTIDO MORADO"): (0.19, 0.72, 0.03, "nnls_calibrado"),
+    _norm_kb("PAIS PARA TODOS"): (0.70, 0.21, 0.02, "nnls_calibrado"),
+    _norm_kb("PARTIDO PATRIOTICO"): (0.73, 0.18, 0.02, "nnls_calibrado"),
+    _norm_kb("COOPERACION POPULAR"): (0.24, 0.66, 0.03, "nnls_calibrado"),
+    _norm_kb("INTEGRIDAD DEMOCRATICA"): (0.75, 0.16, 0.02, "nnls_calibrado"),
+    _norm_kb("PERU LIBRE"): (0.10, 0.82, 0.03, "nnls_calibrado"),
+    _norm_kb("PERU ACCION"): (0.71, 0.20, 0.02, "nnls_calibrado"),
+    _norm_kb("PERU PRIMERO"): (0.67, 0.24, 0.02, "nnls_calibrado"),
+    _norm_kb("PRIN"): (0.72, 0.19, 0.02, "nnls_calibrado"),
+    _norm_kb("SICREO"): (0.70, 0.21, 0.02, "nnls_calibrado"),
+    _norm_kb("PODEMOS PERU"): (0.03, 0.94, 0.01, "nnls_calibrado"),
+    _norm_kb("PRIMERO LA GENTE"): (0.26, 0.64, 0.03, "nnls_calibrado"),
+    _norm_kb("PROGRESEMOS"): (0.71, 0.20, 0.02, "nnls_calibrado"),
+    _norm_kb("RENOVACION POPULAR"): (0.84, 0.08, 0.02, "nnls_calibrado"),
+    _norm_kb("SALVEMOS AL PERU"): (0.71, 0.20, 0.02, "nnls_calibrado"),
+    _norm_kb("UN CAMINO DIFERENTE"): (0.66, 0.25, 0.02, "nnls_calibrado"),
+    _norm_kb("UNIDAD NACIONAL"): (0.76, 0.15, 0.02, "nnls_calibrado"),
+    # Blancos/nulos from 1V → split roughly equally (editorial estimate)
+    _norm_kb("VOTOS EN BLANCO"): (0.35, 0.40, 0.15, "editorial"),
+    _norm_kb("VOTOS NULOS"): (0.35, 0.40, 0.15, "editorial"),
+    _norm_kb("VOTOS IMPUGNADOS"): (0.35, 0.40, 0.15, "editorial"),
+}
+
+
+def get_transfer(party_name: str) -> tuple[float, float, float, str]:
+    """Returns (peso_keiko, peso_sanchez, peso_bn, fuente) for a 1V party name.
+    Falls back to (0.50, 0.40, 0.01, 'default_fallback') if not found."""
+    key = _norm_kb(party_name)
+    if key in TRANSFER_MAP:
+        return TRANSFER_MAP[key]
+    for map_key, val in TRANSFER_MAP.items():
+        if key in map_key or map_key in key:
+            return val
+    return (0.50, 0.40, 0.01, "default_fallback")

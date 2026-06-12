@@ -446,3 +446,209 @@ def test_summarize_ubigeo_prefix_devuelve_sample_enriquecido(tmp_path: Path) -> 
     assert len(summary["sample"]) == 1
     assert summary["sample"][0]["departamento"] == "LORETO"
     assert summary["sample"][0]["ciudad"] == "IQUITOS"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# get_proyeccion_sv_by_mesa_prefix: proyección NNLS por prefijo de mesa
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _seed_mesa_1v_2v(
+    store: DataStore,
+    codigo_mesa: str,
+    *,
+    ubigeo: str,
+    electores: int,
+    emitidos_1v: int,
+    votos_1v: dict[str, int],
+    emitidos_2v: int,
+    votos_2v: dict[str, int],
+) -> None:
+    """Helper: inserta una mesa con votos en ambas vueltas (insert directo en tablas)."""
+    now = store.now_iso()
+    validos_1v = sum(v for pid, v in votos_1v.items() if pid not in {"80", "81", "82"})
+    validos_2v = sum(v for pid, v in votos_2v.items() if pid not in {"80", "81", "82"})
+    with store._connect() as conn:
+        # mesas_data + votos (1V)
+        conn.execute(
+            """INSERT INTO mesas_data (codigo_mesa, ubigeo, local_votacion, electores_habiles,
+               votos_emitidos, votos_validos, blancos, nulos, impugnados, estado_acta, fetched_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (codigo_mesa, ubigeo, "LOCAL TEST", electores, emitidos_1v, validos_1v,
+             votos_1v.get("80", 0), votos_1v.get("81", 0), votos_1v.get("82", 0),
+             "Contabilizada", now),
+        )
+        for pid, v in votos_1v.items():
+            conn.execute(
+                "INSERT INTO votos (codigo_mesa, partido_id, votos, fetched_at) VALUES (?,?,?,?)",
+                (codigo_mesa, pid, v, now),
+            )
+        # mesas_sv + votos_sv (2V)
+        conn.execute(
+            """INSERT INTO mesas_sv (codigo_mesa, id_ubigeo, nombre_local, id_ambito,
+               electores_habiles, votos_emitidos, votos_validos, total_asistentes,
+               codigo_estado_acta, fetched_at) VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (codigo_mesa, ubigeo, "LOCAL TEST", 1, electores, emitidos_2v, validos_2v,
+             emitidos_2v, "C", now),
+        )
+        for pid, v in votos_2v.items():
+            conn.execute(
+                "INSERT INTO votos_sv (codigo_mesa, partido_id, votos, fetched_at) VALUES (?,?,?,?)",
+                (codigo_mesa, pid, v, now),
+            )
+
+
+def _seed_agrupaciones(store: DataStore, mapping: dict[str, str]) -> None:
+    now = store.now_iso()
+    with store._connect() as conn:
+        for pid, nombre in mapping.items():
+            conn.execute(
+                "INSERT INTO agrupaciones (partido_id, nombre, fetched_at) VALUES (?,?,?)",
+                (pid, nombre, now),
+            )
+
+
+def test_get_proyeccion_sv_by_mesa_prefix_aggrega_predice_y_compara(tmp_path: Path) -> None:
+    store = DataStore(tmp_path)
+
+    # Partido 8 = FUERZA POPULAR (Keiko), 10 = JUNTOS POR EL PERU (Sanchez)
+    _seed_agrupaciones(
+        store,
+        {
+            "8": "FUERZA POPULAR",
+            "10": "JUNTOS POR EL PERU",
+            "14": "PARTIDO CIVICO OBRAS",
+            "32": "PODEMOS PERU",
+            "35": "RENOVACION POPULAR",
+            "80": "VOTOS EN BLANCO",
+            "81": "VOTOS NULOS",
+        },
+    )
+
+    # Mesa 900100 (bloque 900K rural)
+    _seed_mesa_1v_2v(
+        store, "900100",
+        ubigeo="010101", electores=200,
+        emitidos_1v=160,
+        votos_1v={"8": 20, "10": 50, "14": 10, "32": 5, "35": 8, "80": 40, "81": 27},
+        emitidos_2v=150,
+        votos_2v={"8": 50, "10": 95, "80": 0, "81": 5},
+    )
+    # Mesa 900200 (bloque 900K rural)
+    _seed_mesa_1v_2v(
+        store, "900200",
+        ubigeo="010102", electores=180,
+        emitidos_1v=140,
+        votos_1v={"8": 15, "10": 45, "14": 8, "32": 4, "35": 6, "80": 35, "81": 27},
+        emitidos_2v=130,
+        votos_2v={"8": 42, "10": 84, "80": 0, "81": 4},
+    )
+    # Mesa 100100 (fuera del bloque 900K - debe ser ignorada)
+    _seed_mesa_1v_2v(
+        store, "100100",
+        ubigeo="150101", electores=300,
+        emitidos_1v=250,
+        votos_1v={"8": 200, "10": 30, "80": 10, "81": 10},
+        emitidos_2v=240,
+        votos_2v={"8": 220, "10": 20, "80": 0, "81": 0},
+    )
+
+    # === Test: prefijo "9" debe cubrir solo las dos mesas 900K ===
+    result = store.get_proyeccion_sv_by_mesa_prefix("9", top_partidos=10)
+
+    assert result["mesa_prefix"] == "9"
+    assert result["primera_vuelta"]["mesas"] == 2
+    assert result["primera_vuelta"]["electores_habiles"] == 380
+    assert result["primera_vuelta"]["votos_emitidos"] == 300
+    # Pool 1V incluye blancos y nulos
+    assert result["primera_vuelta"]["pool_total_1v"] == 300
+
+    obs = result["segunda_vuelta_observada"]
+    assert obs["mesas"] == 2
+    assert obs["keiko"] == 92  # 50 + 42
+    assert obs["sanchez"] == 179  # 95 + 84
+    assert obs["nulos"] == 9  # 5 + 4
+
+    # La predicción NNLS debe ser > 0 (modelo aplica pesos a cada partido)
+    pred = result["proyeccion_nnls_nacional"]
+    assert pred["keiko"] > 0
+    assert pred["sanchez"] > 0
+    assert "NNLS" in pred["modelo"]
+
+    # Error es int/float, no None (porque obs > 0)
+    err = result["error_modelo"]
+    assert err["keiko_pct"] is not None
+    assert err["sanchez_pct"] is not None
+
+    # Breakdown debe incluir partidos ordenados por votos 1V desc
+    names = [p["nombre"] for p in result["breakdown_partidos_top"]]
+    assert "JUNTOS POR EL PERU" in names
+    assert "FUERZA POPULAR" in names
+    # JxP (10) tiene más votos 1V que FP (8) en este escenario
+    assert names.index("JUNTOS POR EL PERU") < names.index("FUERZA POPULAR")
+
+
+def test_get_proyeccion_sv_by_mesa_prefix_prefijo_inexistente_devuelve_ceros(
+    tmp_path: Path,
+) -> None:
+    store = DataStore(tmp_path)
+    _seed_agrupaciones(store, {"8": "FUERZA POPULAR", "10": "JUNTOS POR EL PERU"})
+
+    result = store.get_proyeccion_sv_by_mesa_prefix("99999999")
+
+    assert result["mesa_prefix"] == "99999999"
+    assert result["primera_vuelta"]["mesas"] == 0
+    assert result["primera_vuelta"]["pool_total_1v"] == 0
+    assert result["segunda_vuelta_observada"]["keiko"] == 0
+    assert result["segunda_vuelta_observada"]["sanchez"] == 0
+    # Cuando obs es 0, el pct error es None (sin división por cero)
+    assert result["error_modelo"]["keiko_pct"] is None
+    assert result["error_modelo"]["sanchez_pct"] is None
+    assert result["breakdown_partidos_top"] == []
+
+
+def test_get_proyeccion_sv_by_mesa_prefix_valida_input(tmp_path: Path) -> None:
+    import pytest
+
+    store = DataStore(tmp_path)
+
+    for bad in ["", "  ", "abc", "9a", "1 2 3"]:
+        with pytest.raises(ValueError, match="mesa_prefix"):
+            store.get_proyeccion_sv_by_mesa_prefix(bad)
+
+
+def test_get_proyeccion_sv_by_mesa_prefix_filtra_por_prefijo_estricto(
+    tmp_path: Path,
+) -> None:
+    """Verifica que '900' no incluya mesas '100100' (que no comienzan con 900)."""
+    store = DataStore(tmp_path)
+    _seed_agrupaciones(
+        store, {"8": "FUERZA POPULAR", "10": "JUNTOS POR EL PERU", "80": "VOTOS EN BLANCO", "81": "VOTOS NULOS"}
+    )
+
+    _seed_mesa_1v_2v(
+        store, "900001",
+        ubigeo="010101", electores=100,
+        emitidos_1v=80,
+        votos_1v={"8": 10, "10": 60, "80": 5, "81": 5},
+        emitidos_2v=75,
+        votos_2v={"8": 25, "10": 50, "80": 0, "81": 0},
+    )
+    _seed_mesa_1v_2v(
+        store, "901000",
+        ubigeo="010102", electores=100,
+        emitidos_1v=70,
+        votos_1v={"8": 5, "10": 50, "80": 10, "81": 5},
+        emitidos_2v=70,
+        votos_2v={"8": 20, "10": 50, "80": 0, "81": 0},
+    )
+
+    # Prefijo "900" debe incluir solo mesa 900001
+    r900 = store.get_proyeccion_sv_by_mesa_prefix("900")
+    assert r900["primera_vuelta"]["mesas"] == 1
+    assert r900["segunda_vuelta_observada"]["keiko"] == 25
+
+    # Prefijo "9" debe incluir ambas mesas
+    r9 = store.get_proyeccion_sv_by_mesa_prefix("9")
+    assert r9["primera_vuelta"]["mesas"] == 2
+    assert r9["segunda_vuelta_observada"]["keiko"] == 45  # 25 + 20
+    assert r9["segunda_vuelta_observada"]["sanchez"] == 100  # 50 + 50
