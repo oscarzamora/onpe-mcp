@@ -48,7 +48,8 @@ Servidor [MCP](https://modelcontextprotocol.io/) para consultas electorales sobr
 # 1. Clonar e instalar
 git clone https://github.com/oscarzamora/onpe-mcp
 cd onpe-mcp
-pip install -e .
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"
 
 # 2. (Opcional pero recomendado) clonar la fuente de datos más actualizada
 git clone https://github.com/oscarzamora/onpeescraper ../onpescraper
@@ -295,4 +296,3 @@ Copia `.env.example` a `.env` para ajustar valores:
 - Especificación técnica: `docs/onpe-api-contract.md`
 - JSON schema response: `schemas/onpe.actas.buscar.mesa.response.schema.json`
 - JSON schema acta mínima: `schemas/onpe.acta.min.schema.json`
-
