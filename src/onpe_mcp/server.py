@@ -2102,6 +2102,13 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 10) -> dict[str,
                 or re.search(r"\bparlamentarios?\b", q_norm)
                 or re.search(r"\blegisladores?\b", q_norm)
                 or re.search(r"\bcurules?\b", q_norm)):
+            # Usa cliente global (testeable/monkeypatchable) acotando timeout/retries.
+            leg_api = onpe_api
+            try:
+                leg_api.timeout = 1
+                leg_api.retries = 1
+            except Exception:
+                pass
             cargo = "senadores" if ("senador" in q_norm or ("esca" in q_norm and "senador" in q_norm)) else "diputados"
             if "senador" in q_norm:
                 cargo = "senadores"
@@ -2112,7 +2119,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 10) -> dict[str,
 
             district: object
             try:
-                district = onpe_api.resolve_district(distrito_expr)
+                district = leg_api.resolve_district(distrito_expr)
             except Exception:
                 district = None
             if district is None:
@@ -2140,7 +2147,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 10) -> dict[str,
 
             for endpoint_path, election_id in endpoint_candidates:
                 try:
-                    rows = onpe_api.get_candidates_by_district(
+                    rows = leg_api.get_candidates_by_district(
                         endpoint_path=endpoint_path,
                         id_eleccion=election_id,
                         id_distrito_electoral=district.id_distrito_electoral,
