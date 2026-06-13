@@ -3995,8 +3995,11 @@ class DataStore:
         result["ubicaciones_sv"] = self.bootstrap_sv_ubicaciones(sv_output_dir)
         result["reasignados"] = self.bootstrap_sv_reasignados(sv_output_dir)
         result["resumen"] = self.bootstrap_resumen_sv(sv_resumen_dir)
-        result["ctas"] = self.rebuild_sv_ctas_levels()
-        result["transfer_map_seeded"] = self.seed_transfer_map()
+        # rebuild_sv_ctas_levels y seed_transfer_map son opcionales (legacy / cycle tests)
+        if hasattr(self, "rebuild_sv_ctas_levels"):
+            result["ctas"] = self.rebuild_sv_ctas_levels()
+        if hasattr(self, "seed_transfer_map"):
+            result["transfer_map_seeded"] = self.seed_transfer_map()
         return result
 
     def onpe_sv_refresh_from_scraper(
@@ -4012,7 +4015,8 @@ class DataStore:
         result["ubicaciones_sv"] = self.bootstrap_sv_ubicaciones(sv_output_dir)
         result["reasignados"] = self.bootstrap_sv_reasignados(sv_output_dir)
         result["resumen"] = self.bootstrap_resumen_sv(sv_resumen_dir)
-        result["ctas"] = self.rebuild_sv_ctas_levels()
+        if hasattr(self, "rebuild_sv_ctas_levels"):
+            result["ctas"] = self.rebuild_sv_ctas_levels()
         return result
 
     def get_sv_conteo_actual(self) -> dict[str, Any]:
