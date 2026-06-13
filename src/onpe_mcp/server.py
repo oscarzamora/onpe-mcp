@@ -1463,6 +1463,70 @@ def onpe_sv_proyeccion_transferencia(
 
 
 @mcp.tool()
+def onpe_sv_resultados() -> dict[str, Any]:
+    """Conteo actual de la SEGUNDA VUELTA 2026 desde el cache local hidratado.
+
+    Cache-first: usa siempre los datos hidratados en SQLite (tablas sv_resumen_nacional,
+    mesas_sv, votos_sv) — no consulta ONPE en vivo. Esto garantiza respuestas
+    consistentes y reproducibles.
+
+    Retorna tres bloques:
+      - oficial: cifras certificadas por ONPE (solo actas Contabilizadas).
+      - desglose_por_estado: votos por código_estado_acta (C=Contabilizada,
+        E=En proceso, P=Pendiente).
+      - proyectado_con_crudo: total agregado C+E (incluye votos escaneados de actas
+        E aún no certificadas oficialmente).
+    """
+    started_ms = now_ms()
+    try:
+        result = store.get_sv_conteo_actual()
+        oficial = result.get("oficial", {})
+        proy = result.get("proyectado_con_crudo", {})
+        candidatos = oficial.get("candidatos", [])
+
+        # Construir answer legible
+        lines = ["**Resultado SEGUNDA VUELTA 2026 — cache hidratado**", ""]
+        if oficial.get("pct_contabilizadas") is not None:
+            lines.append(
+                f"📊 Cobertura oficial ONPE: {oficial['actas_contabilizadas']:,} / "
+                f"{oficial['total_actas']:,} actas ({oficial['pct_contabilizadas']:.4f}%)"
+            )
+            lines.append(f"🗳️ Participación: {oficial.get('participacion', 0):.2f}%")
+            lines.append(f"🕐 Último refresh ONPE: {oficial.get('fecha_actualizacion')}")
+            lines.append("")
+        lines.append("**Cifras OFICIALES (certificadas):**")
+        for c in candidatos:
+            lines.append(
+                f"  • {c['nombre']}: {c['votos_validos']:,} votos "
+                f"({c['pct_votos_validos']:.4f}%)"
+            )
+        if proy:
+            lines.append("")
+            lines.append("**Proyectado con crudo capturado (C + E):**")
+            lines.append(
+                f"  • Keiko: {proy['keiko']:,} ({proy['pct_keiko']:.4f}%)"
+            )
+            lines.append(
+                f"  • Sánchez: {proy['sanchez']:,} ({proy['pct_sanchez']:.4f}%)"
+            )
+            lines.append(
+                f"  • Margen Keiko–Sánchez: {proy['margen_keiko_sanchez']:+,d} votos"
+            )
+        if result.get("cache_hidratado_al"):
+            lines.append("")
+            lines.append(f"_cache_hidratado_al: {result['cache_hidratado_al']}_")
+
+        return ok_response(
+            {**result, "answer": "\n".join(lines)},
+            started_ms=started_ms,
+            meta={"source": "sqlite_sv_cache"},
+        )
+    except Exception as exc:
+        logger.exception("Error en onpe_sv_resultados")
+        return error_response(str(exc), started_ms=started_ms)
+
+
+@mcp.tool()
 def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 10) -> dict[str, Any]:
     """Interfaz conversacional única para consultas comunes de ONPE con estrategia cache-first.
 
@@ -1869,6 +1933,75 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 10) -> dict[str,
         _has_sv_kw = any(kw in q_norm for kw in ("segunda vuelta", "segunda_vuelta", "2da vuelta"))
         _has_reasignado_kw = any(kw in q_norm for kw in ("reasignad", "local reasignado", "reubicad", "huelga", "extorsion", "reconstruccion"))
         _has_transfer_kw = any(kw in q_norm for kw in ("transferencia", "a donde fueron los votos", "proyeccion", "como se repartieron"))
+
+        # SV: conteo actual desde cache hidratado (intent 'sv_resultados').
+        # Trigger: queries sobre el conteo / quién va ganando / margen / balotaje.
+        # Se intercepta ANTES del JEE para que "cuánto va la segunda vuelta" use el cache.
+        _sv_count_triggers = (
+            "ballotage", "ballottage", "balotaje",
+            "resultado final", "resultado oficial", "quien gana", "quien va ganando",
+            "ganador 2v", "conteo actual", "conteo sv", "conteo segunda",
+            "cuanto va", "que va", "como va",
+        )
+        _sv_candidates_hint = (
+            ("keiko" in q_norm and "sanchez" in q_norm) or
+            ("fujimori" in q_norm and "sanchez" in q_norm) or
+            ("fuerza popular" in q_norm and "juntos por el peru" in q_norm)
+        )
+        # No disparar si la query tiene contexto de actas observadas / JEE / reasignados
+        _is_jee_or_reasignados = (
+            "observad" in q_norm or "jee" in q_norm or
+            _has_reasignado_kw or _has_transfer_kw
+        )
+        _trigger_sv_resultados = (
+            (_has_sv_kw and any(t in q_norm for t in _sv_count_triggers))
+            or any(t in q_norm for t in ("balotaje", "ballotage", "ballottage"))
+            or _sv_candidates_hint
+        ) and not _is_jee_or_reasignados
+        if _trigger_sv_resultados:
+            try:
+                sv_data = store.get_sv_conteo_actual()
+                oficial = sv_data.get("oficial", {})
+                proy = sv_data.get("proyectado_con_crudo", {})
+                candidatos = oficial.get("candidatos", [])
+                lines_sv = ["**SEGUNDA VUELTA 2026 — cache hidratado**", ""]
+                if oficial.get("pct_contabilizadas") is not None:
+                    lines_sv.append(
+                        f"📊 {oficial['actas_contabilizadas']:,}/{oficial['total_actas']:,} actas "
+                        f"({oficial['pct_contabilizadas']:.4f}% certificado)  ·  "
+                        f"participación {oficial.get('participacion', 0):.2f}%"
+                    )
+                lines_sv.append("")
+                lines_sv.append("**Cifras OFICIALES (certificadas ONPE):**")
+                for c in candidatos:
+                    if c.get('partido_id') in ('8', '10'):
+                        lines_sv.append(
+                            f"  • {c['nombre']}: {c['votos_validos']:,} votos "
+                            f"({c['pct_votos_validos']:.4f}%)"
+                        )
+                if proy and proy.get('keiko'):
+                    lines_sv.append("")
+                    lines_sv.append("**Proyectado con crudo capturado (C + E):**")
+                    lines_sv.append(f"  • Keiko (FP):    {proy['keiko']:,} ({proy['pct_keiko']:.4f}%)")
+                    lines_sv.append(f"  • Sánchez (JxP): {proy['sanchez']:,} ({proy['pct_sanchez']:.4f}%)")
+                    lines_sv.append(f"  • **Margen K–S: {proy['margen_keiko_sanchez']:+,d} votos**")
+                if sv_data.get("cache_hidratado_al"):
+                    lines_sv.append("")
+                    lines_sv.append(f"_fuente: cache local SQLite, hidratado {sv_data['cache_hidratado_al']}_")
+                store.append_raw_event("onpe_chat_sv_resultados", {"query": q})
+                return ok_response(
+                    {
+                        "intent": "sv_resultados",
+                        "answer": "\n".join(lines_sv),
+                        "result": sv_data,
+                        "source": "sqlite_sv_cache",
+                        "data_tier": "tier_1_local_cache",
+                    },
+                    started_ms=started_ms,
+                )
+            except Exception:
+                logger.exception("Error consultando SV cache en onpe_chat")
+                # Cae al flujo normal si algo falla
 
         # SV: actas observadas / envío al JEE / escenario "todas aceptadas"
         _jee_data = _detect_jee_intent(q, q_norm)

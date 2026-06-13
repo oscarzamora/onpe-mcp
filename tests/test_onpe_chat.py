@@ -711,3 +711,123 @@ def test_range_claim_verify_sin_datos(monkeypatch) -> None:
     assert data["intent"] == "range_claim_verify"
     assert data["result"]["is_partial"] is True
     assert data["source"] == "sqlite_empty"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Intent SV: cuando preguntan por segunda vuelta, MCP debe consultar el cache
+# hidratado — NUNCA caer a knowledge_base con cifras hardcoded de primera vuelta.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_FAKE_SV_HIDRATADO: dict[str, Any] = {
+    "sv_hidratada": True,
+    "oficial": {
+        "candidatos": [
+            {"partido_id": "8", "nombre": "KEIKO FUJIMORI",
+             "votos_validos": 9_035_493, "pct_votos_validos": 50.003},
+            {"partido_id": "10", "nombre": "ROBERTO SANCHEZ",
+             "votos_validos": 9_034_466, "pct_votos_validos": 49.997},
+        ],
+        "actas_contabilizadas": 91146,
+        "total_actas": 92766,
+        "pct_contabilizadas": 98.2537,
+        "participacion": 70.75,
+        "fecha_actualizacion": "2026-06-12T01:50:19Z",
+        "loaded_at": "2026-06-12T02:52:08Z",
+    },
+    "desglose_por_estado": [
+        {"codigo_estado": "C", "descripcion": "Contabilizada", "mesas": 91106,
+         "electores_habiles": 26_811_056, "keiko": 9_031_214, "sanchez": 9_031_390,
+         "blancos": 116478, "nulos": 1_146_578, "margen_keiko_sanchez": -176},
+        {"codigo_estado": "E", "descripcion": "En proceso", "mesas": 1651,
+         "electores_habiles": 512_179, "keiko": 188_946, "sanchez": 139_834,
+         "blancos": 15916, "nulos": 19635, "margen_keiko_sanchez": 49112},
+    ],
+    "proyectado_con_crudo": {
+        "mesas_con_votos": 92720, "keiko": 9_220_160, "sanchez": 9_171_224,
+        "blancos": 132394, "nulos": 1_166_213, "margen_keiko_sanchez": 48936,
+        "pct_keiko": 50.133, "pct_sanchez": 49.867,
+    },
+    "cache_hidratado_al": "2026-06-12T02:52:01Z",
+    "nota_metodologia": "test",
+}
+
+
+def test_onpe_chat_segunda_vuelta_usa_cache_hidratado(monkeypatch) -> None:
+    """Cuando preguntan por SV, intent debe ser sv_resultados y la fuente debe ser SQLite."""
+    _disable_autosync(monkeypatch)
+    monkeypatch.setattr(
+        server_module.store,
+        "get_sv_conteo_actual",
+        lambda: _FAKE_SV_HIDRATADO,
+    )
+
+    queries_sv = [
+        "cuanto va la segunda vuelta",
+        "Keiko vs Sanchez",
+        "balotaje resultado",
+        "conteo actual segunda vuelta",
+        "quien gana segunda vuelta",
+        "ballotage 2026",
+    ]
+    for q in queries_sv:
+        result = onpe_chat(q)
+        assert result["ok"] is True, f"falló para '{q}': {result.get('errors')}"
+        data = result["data"]
+        assert data["intent"] == "sv_resultados", (
+            f"intent incorrecto para '{q}': {data.get('intent')}"
+        )
+        assert data["source"] == "sqlite_sv_cache", (
+            f"source incorrecto para '{q}': {data.get('source')}"
+        )
+        assert data["data_tier"] == "tier_1_local_cache"
+
+
+def test_onpe_chat_sv_answer_incluye_cifras_oficiales_y_proyectadas(monkeypatch) -> None:
+    """El answer debe incluir las dos cifras (oficial certificada + proyectada con crudo)."""
+    _disable_autosync(monkeypatch)
+    monkeypatch.setattr(
+        server_module.store,
+        "get_sv_conteo_actual",
+        lambda: _FAKE_SV_HIDRATADO,
+    )
+
+    result = onpe_chat("balotaje resultado")
+    ans = result["data"]["answer"]
+
+    # Cifras OFICIALES certificadas
+    assert "9,035,493" in ans
+    assert "9,034,466" in ans
+    assert "50.0030%" in ans
+    assert "49.9970%" in ans
+    # Proyectado con crudo
+    assert "9,220,160" in ans
+    assert "9,171,224" in ans
+    # Margen
+    assert "+48,936" in ans
+    # NO debe filtrarse las cifras viejas de PRIMERA VUELTA del knowledge_base
+    assert "2,877,621" not in ans
+    assert "17.18%" not in ans
+
+
+def test_onpe_chat_sv_no_consulta_knowledge_base_fallback(monkeypatch) -> None:
+    """Si el cache está hidratado, NUNCA debe llegar al fallback de knowledge_base."""
+    _disable_autosync(monkeypatch)
+
+    sentinel_called = {"hit": False}
+
+    def _spy_kb(*_a, **_kw):
+        sentinel_called["hit"] = True
+        return ["fallback ilegítimo activado"]
+
+    monkeypatch.setattr(
+        server_module.store,
+        "get_sv_conteo_actual",
+        lambda: _FAKE_SV_HIDRATADO,
+    )
+    monkeypatch.setattr(server_module, "get_fallback_qualitative", _spy_kb)
+
+    onpe_chat("balotaje resultado")
+
+    assert sentinel_called["hit"] is False, (
+        "onpe_chat cayó a knowledge_base aunque el cache SV está hidratado"
+    )

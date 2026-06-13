@@ -4014,3 +4014,174 @@ class DataStore:
         result["resumen"] = self.bootstrap_resumen_sv(sv_resumen_dir)
         result["ctas"] = self.rebuild_sv_ctas_levels()
         return result
+
+    def get_sv_conteo_actual(self) -> dict[str, Any]:
+        """Retorna el conteo actual de segunda vuelta 2026 desde el cache hidratado.
+
+        Combina la cifra oficial ONPE (sv_resumen_nacional, solo actas Contabilizadas)
+        con el desglose mesa-a-mesa de votos_sv (que incluye actas E con votos crudos
+        capturados pero aún no certificadas por ONPE).
+
+        Retorna estructura con tres bloques:
+          - oficial: lo que ONPE certificó (snapshot del último refresh).
+          - desglose_por_estado: votos K/S por código_estado_acta (C/E/P).
+          - proyectado_con_crudo: total combinando C+E (incluye crudo no certificado).
+
+        Si las tablas SV no existen aún (DB sin hidratar), retorna estructura vacía
+        con un flag `sv_hidratada=False` para que el llamador pueda dar fallback.
+        """
+        with self._connect() as conn:
+            # Verificar si las tablas SV existen en esta DB
+            sv_tables = {
+                r[0] for r in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' "
+                    "AND name IN ('sv_resumen_nacional','mesas_sv','votos_sv')"
+                )
+            }
+            if not sv_tables:
+                return {
+                    "sv_hidratada": False,
+                    "oficial": {"candidatos": [], "actas_contabilizadas": 0,
+                                "total_actas": 0, "pct_contabilizadas": 0.0,
+                                "participacion": 0.0, "fecha_actualizacion": None,
+                                "loaded_at": None},
+                    "desglose_por_estado": [],
+                    "proyectado_con_crudo": {"mesas_con_votos": 0, "keiko": 0,
+                                              "sanchez": 0, "blancos": 0, "nulos": 0,
+                                              "margen_keiko_sanchez": 0,
+                                              "pct_keiko": 0.0, "pct_sanchez": 0.0},
+                    "cache_hidratado_al": None,
+                    "nota_metodologia": (
+                        "Esta DB no tiene tablas SV hidratadas. "
+                        "Verifica el path ONPE_DATA_DIR o ejecuta el bootstrap SV."
+                    ),
+                }
+
+            # Bloque 1: oficial certificado
+            oficial_rows = conn.execute(
+                """SELECT partido_id, nombre_candidato, nombre_agrupacion,
+                          votos_validos, pct_votos_validos,
+                          contabilizadas, total_actas, participacion_ciudadana,
+                          fecha_actualizacion, loaded_at
+                   FROM sv_resumen_nacional
+                   ORDER BY votos_validos DESC"""
+            ).fetchall()
+
+            oficial = {
+                "candidatos": [],
+                "actas_contabilizadas": 0,
+                "total_actas": 0,
+                "pct_contabilizadas": 0.0,
+                "participacion": 0.0,
+                "fecha_actualizacion": None,
+                "loaded_at": None,
+            }
+            for row in oficial_rows:
+                nombre = (row["nombre_candidato"] or row["nombre_agrupacion"] or "").strip()
+                oficial["candidatos"].append({
+                    "partido_id": str(row["partido_id"] or ""),
+                    "nombre": nombre,
+                    "votos_validos": int(row["votos_validos"] or 0),
+                    "pct_votos_validos": float(row["pct_votos_validos"] or 0),
+                })
+                if not oficial["fecha_actualizacion"]:
+                    contab = int(row["contabilizadas"] or 0)
+                    tot = int(row["total_actas"] or 0)
+                    oficial["actas_contabilizadas"] = contab
+                    oficial["total_actas"] = tot
+                    oficial["pct_contabilizadas"] = round(contab / tot * 100, 4) if tot else 0.0
+                    oficial["participacion"] = float(row["participacion_ciudadana"] or 0)
+                    oficial["fecha_actualizacion"] = row["fecha_actualizacion"]
+                    oficial["loaded_at"] = row["loaded_at"]
+
+            # Bloque 2: desglose por estado de acta
+            # Mesas y electores: agregados directos sobre mesas_sv (sin JOIN para evitar duplicación)
+            mesas_por_estado = {
+                str(r["codigo_estado_acta"] or ""): {
+                    "mesas": int(r["mesas"] or 0),
+                    "electores": int(r["electores"] or 0),
+                }
+                for r in conn.execute(
+                    """SELECT codigo_estado_acta,
+                              COUNT(*) AS mesas,
+                              COALESCE(SUM(electores_habiles), 0) AS electores
+                       FROM mesas_sv
+                       GROUP BY codigo_estado_acta"""
+                )
+            }
+            # Votos K/S/B/N por estado (con JOIN — agregaciones de votos sí necesitan el join)
+            votos_por_estado = {
+                str(r["estado"] or ""): r
+                for r in conn.execute(
+                    """SELECT m.codigo_estado_acta AS estado,
+                              COALESCE(SUM(CASE WHEN v.partido_id='8' THEN v.votos END), 0) AS k,
+                              COALESCE(SUM(CASE WHEN v.partido_id='10' THEN v.votos END), 0) AS s,
+                              COALESCE(SUM(CASE WHEN v.partido_id='80' THEN v.votos END), 0) AS blancos,
+                              COALESCE(SUM(CASE WHEN v.partido_id='81' THEN v.votos END), 0) AS nulos
+                       FROM mesas_sv m
+                       JOIN votos_sv v ON v.codigo_mesa = m.codigo_mesa
+                       GROUP BY m.codigo_estado_acta"""
+                )
+            }
+
+            estado_nombre = {"C": "Contabilizada", "E": "En proceso", "P": "Pendiente"}
+            desglose = []
+            for est, info in sorted(mesas_por_estado.items()):
+                vr = votos_por_estado.get(est)
+                k = int(vr["k"] or 0) if vr else 0
+                s = int(vr["s"] or 0) if vr else 0
+                desglose.append({
+                    "codigo_estado": est,
+                    "descripcion": estado_nombre.get(est, f"Otro ({est})"),
+                    "mesas": info["mesas"],
+                    "electores_habiles": info["electores"],
+                    "keiko": k,
+                    "sanchez": s,
+                    "blancos": int(vr["blancos"] or 0) if vr else 0,
+                    "nulos": int(vr["nulos"] or 0) if vr else 0,
+                    "margen_keiko_sanchez": k - s,
+                })
+
+            # Bloque 3: total mesa-a-mesa (incluye C + E)
+            total_row = conn.execute(
+                """SELECT COUNT(DISTINCT codigo_mesa) AS n_mesas,
+                          COALESCE(SUM(CASE WHEN partido_id='8' THEN votos END), 0) AS k,
+                          COALESCE(SUM(CASE WHEN partido_id='10' THEN votos END), 0) AS s,
+                          COALESCE(SUM(CASE WHEN partido_id='80' THEN votos END), 0) AS blancos,
+                          COALESCE(SUM(CASE WHEN partido_id='81' THEN votos END), 0) AS nulos
+                   FROM votos_sv"""
+            ).fetchone()
+
+            tot_k = int(total_row["k"] or 0) if total_row else 0
+            tot_s = int(total_row["s"] or 0) if total_row else 0
+            tot_val = tot_k + tot_s
+            proyectado = {
+                "mesas_con_votos": int(total_row["n_mesas"] or 0) if total_row else 0,
+                "keiko": tot_k,
+                "sanchez": tot_s,
+                "blancos": int(total_row["blancos"] or 0) if total_row else 0,
+                "nulos": int(total_row["nulos"] or 0) if total_row else 0,
+                "margen_keiko_sanchez": tot_k - tot_s,
+                "pct_keiko": round(tot_k / tot_val * 100, 4) if tot_val else 0.0,
+                "pct_sanchez": round(tot_s / tot_val * 100, 4) if tot_val else 0.0,
+            }
+
+            # Timestamps de las tablas SV
+            ts_row = conn.execute(
+                """SELECT MAX(fetched_at) AS last_mesas FROM mesas_sv"""
+            ).fetchone()
+            cache_last = ts_row["last_mesas"] if ts_row else None
+
+        return {
+            "oficial": oficial,
+            "desglose_por_estado": desglose,
+            "proyectado_con_crudo": proyectado,
+            "cache_hidratado_al": cache_last,
+            "nota_metodologia": (
+                "El bloque 'oficial' refleja solo actas Contabilizadas certificadas por ONPE. "
+                "El bloque 'proyectado_con_crudo' suma C + E (votos crudos capturados pero "
+                "aún no certificados oficialmente). La diferencia entre ambos representa el "
+                "voto ya escaneado pero pendiente de cierre formal de acta."
+            ),
+            "sv_hidratada": True,
+        }

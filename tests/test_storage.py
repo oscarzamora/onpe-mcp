@@ -652,3 +652,156 @@ def test_get_proyeccion_sv_by_mesa_prefix_filtra_por_prefijo_estricto(
     assert r9["primera_vuelta"]["mesas"] == 2
     assert r9["segunda_vuelta_observada"]["keiko"] == 45  # 25 + 20
     assert r9["segunda_vuelta_observada"]["sanchez"] == 100  # 50 + 50
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# get_sv_conteo_actual: lee resultado SV desde cache hidratado (cache-first)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _seed_sv_minimal(store: DataStore) -> None:
+    """Helper: poblar tablas SV mínimas para tests del conteo de segunda vuelta."""
+    now = store.now_iso()
+    with store._connect() as conn:
+        # Crear tablas SV si no existen (en algunas DBs nuevas el _init_schema
+        # no las incluye porque vienen de un bootstrap externo)
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS sv_resumen_nacional (
+                partido_id TEXT, nombre_candidato TEXT, nombre_agrupacion TEXT,
+                votos_validos INTEGER, pct_votos_validos REAL, pct_votos_emitidos REAL,
+                actas_contabilizadas_pct REAL, contabilizadas INTEGER, total_actas INTEGER,
+                participacion_ciudadana REAL, fecha_actualizacion TEXT, fuente TEXT,
+                loaded_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS mesas_sv (
+                codigo_mesa TEXT PRIMARY KEY, id_ubigeo TEXT, nombre_local TEXT,
+                id_ambito INTEGER, electores_habiles INTEGER, votos_emitidos INTEGER,
+                votos_validos INTEGER, total_asistentes INTEGER,
+                codigo_estado_acta TEXT, fetched_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS votos_sv (
+                codigo_mesa TEXT, partido_id TEXT, votos INTEGER, fetched_at TEXT,
+                PRIMARY KEY (codigo_mesa, partido_id)
+            );
+            """
+        )
+
+        conn.execute(
+            """INSERT INTO sv_resumen_nacional
+            (partido_id, nombre_candidato, nombre_agrupacion, votos_validos,
+             pct_votos_validos, pct_votos_emitidos, actas_contabilizadas_pct,
+             contabilizadas, total_actas, participacion_ciudadana,
+             fecha_actualizacion, fuente, loaded_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            ("8", "KEIKO FUJIMORI", "FUERZA POPULAR", 9_035_493, 50.003, 0.0,
+             98.25, 91146, 92766, 70.75, now, "test", now),
+        )
+        conn.execute(
+            """INSERT INTO sv_resumen_nacional
+            (partido_id, nombre_candidato, nombre_agrupacion, votos_validos,
+             pct_votos_validos, pct_votos_emitidos, actas_contabilizadas_pct,
+             contabilizadas, total_actas, participacion_ciudadana,
+             fecha_actualizacion, fuente, loaded_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            ("10", "ROBERTO SANCHEZ", "JUNTOS POR EL PERU", 9_034_466, 49.997, 0.0,
+             98.25, 91146, 92766, 70.75, now, "test", now),
+        )
+
+        for codigo, estado, electores, k_votos, s_votos in [
+            ("100001", "C", 300, 150, 130),
+            ("100002", "E", 250, 100, 80),
+            ("100003", "P", 200, 0, 0),
+        ]:
+            conn.execute(
+                """INSERT INTO mesas_sv (codigo_mesa, id_ubigeo, nombre_local, id_ambito,
+                electores_habiles, votos_emitidos, votos_validos, total_asistentes,
+                codigo_estado_acta, fetched_at) VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (codigo, "150101", "LOCAL TEST", 1, electores, k_votos + s_votos,
+                 k_votos + s_votos, k_votos + s_votos, estado, now),
+            )
+            if k_votos:
+                conn.execute(
+                    "INSERT INTO votos_sv (codigo_mesa, partido_id, votos, fetched_at) VALUES (?,?,?,?)",
+                    (codigo, "8", k_votos, now),
+                )
+            if s_votos:
+                conn.execute(
+                    "INSERT INTO votos_sv (codigo_mesa, partido_id, votos, fetched_at) VALUES (?,?,?,?)",
+                    (codigo, "10", s_votos, now),
+                )
+
+
+def test_get_sv_conteo_actual_devuelve_oficial_desglose_y_proyectado(tmp_path: Path) -> None:
+    store = DataStore(tmp_path)
+    _seed_sv_minimal(store)
+
+    result = store.get_sv_conteo_actual()
+
+    assert result["sv_hidratada"] is True
+
+    oficial = result["oficial"]
+    assert oficial["actas_contabilizadas"] == 91146
+    assert oficial["total_actas"] == 92766
+    assert oficial["pct_contabilizadas"] == round(91146 / 92766 * 100, 4)
+    assert oficial["participacion"] == 70.75
+    nombres = [c["nombre"] for c in oficial["candidatos"]]
+    assert "KEIKO FUJIMORI" in nombres
+    assert "ROBERTO SANCHEZ" in nombres
+
+    desglose = {row["codigo_estado"]: row for row in result["desglose_por_estado"]}
+    assert desglose["C"]["mesas"] == 1
+    assert desglose["C"]["keiko"] == 150
+    assert desglose["C"]["sanchez"] == 130
+    assert desglose["C"]["margen_keiko_sanchez"] == 20
+    assert desglose["E"]["mesas"] == 1
+    assert desglose["E"]["keiko"] == 100
+    assert desglose["E"]["sanchez"] == 80
+    assert desglose["P"]["mesas"] == 1
+    assert desglose["P"]["keiko"] == 0
+
+    proy = result["proyectado_con_crudo"]
+    assert proy["keiko"] == 250  # 150 + 100
+    assert proy["sanchez"] == 210  # 130 + 80
+    assert proy["margen_keiko_sanchez"] == 40
+    assert proy["pct_keiko"] > proy["pct_sanchez"]
+
+
+def test_get_sv_conteo_actual_sin_tablas_sv_retorna_no_hidratada(tmp_path: Path) -> None:
+    """Si las tablas SV no existen, debe retornar estructura vacía con sv_hidratada=False."""
+    store = DataStore(tmp_path)
+
+    with store._connect() as conn:
+        for tabla in ("sv_resumen_nacional", "mesas_sv", "votos_sv"):
+            conn.execute(f"DROP TABLE IF EXISTS {tabla}")
+
+    result = store.get_sv_conteo_actual()
+
+    assert result["sv_hidratada"] is False
+    assert result["oficial"]["candidatos"] == []
+    assert result["desglose_por_estado"] == []
+    assert result["proyectado_con_crudo"]["keiko"] == 0
+    assert result["proyectado_con_crudo"]["sanchez"] == 0
+
+
+def test_get_sv_conteo_actual_no_consulta_onpe_live(tmp_path: Path, monkeypatch) -> None:
+    """Garantiza que la lectura SV es 100% offline desde SQLite — nunca toca la red."""
+    import urllib.request as urlreq
+
+    def _fail_network(*args, **kwargs):
+        raise AssertionError(
+            "get_sv_conteo_actual NO debe abrir conexiones de red; debe usar solo SQLite"
+        )
+
+    monkeypatch.setattr(urlreq, "urlopen", _fail_network)
+    try:
+        import curl_cffi.requests as cffi
+        monkeypatch.setattr(cffi, "get", _fail_network, raising=False)
+    except ImportError:
+        pass
+
+    store = DataStore(tmp_path)
+    _seed_sv_minimal(store)
+
+    result = store.get_sv_conteo_actual()
+    assert result["sv_hidratada"] is True
+    assert result["oficial"]["actas_contabilizadas"] == 91146
