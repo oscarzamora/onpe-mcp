@@ -188,11 +188,201 @@ class DataStore:
         self.db_path = data_dir / "onpe.db"
         self.raw_dir = data_dir / "raw"
         self.reports_dir = data_dir / "reports"
+        self.denorm_db_path = data_dir / "onpe_denorm.db"
+        self._denorm_ready: bool | None = None
 
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.raw_dir.mkdir(parents=True, exist_ok=True)
         self.reports_dir.mkdir(parents=True, exist_ok=True)
         self._init_schema()
+
+    @property
+    def denorm_available(self) -> bool:
+        if self._denorm_ready is None:
+            self._denorm_ready = self.denorm_db_path.exists()
+        return self._denorm_ready
+
+    def _connect_denorm(self) -> sqlite3.Connection:
+        uri = f"file:{self.denorm_db_path}?mode=ro"
+        conn = sqlite3.connect(uri, uri=True)
+        conn.execute("PRAGMA cache_size=-131072")   # 128 MB page cache
+        conn.execute("PRAGMA mmap_size=536870912")  # 512 MB mmap
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _query_sv_geo_denorm(self, nivel: str, ubigeo: str | None, nombre: str | None, top_n: int) -> list[dict]:
+        """Denorm fast-path for query_sv_geo."""
+        conn = self._connect_denorm()
+        try:
+            nivel_norm = nivel.lower().strip() if nivel else "nacional"
+
+            if nivel_norm in ("nacional", "pais"):
+                rows = conn.execute("""
+                    SELECT partido_id, nombre_partido AS nombre_agrupacion,
+                           candidato AS nombre_candidato,
+                           votos, pct_votos_validos,
+                           total_mesas, mesas_contabilizadas,
+                           total_electores_habiles, total_votos_emitidos, total_votos_validos
+                    FROM fact_votos_nacional
+                    WHERE election_year=2026 AND vuelta=2 AND es_especial=0
+                    ORDER BY votos DESC
+                    LIMIT ?
+                """, (top_n,)).fetchall()
+                result = []
+                for r in rows:
+                    result.append({
+                        "partido_id": r["partido_id"],
+                        "nombre_agrupacion": r["nombre_agrupacion"],
+                        "nombre_candidato": r["nombre_candidato"],
+                        "votos_validos": r["votos"],
+                        "pct_votos_validos": r["pct_votos_validos"],
+                        "ubigeo": "000000",
+                    })
+                return result
+
+            elif nivel_norm in ("departamento", "region", "dpto"):
+                filter_clause = ""
+                params: list = [top_n]
+                if ubigeo:
+                    filter_clause = "AND SUBSTR('000000'||cod_departamento,-2) = SUBSTR(?,1,2)"
+                    params = [ubigeo[:2].zfill(2)] + [top_n]
+                elif nombre:
+                    filter_clause = "AND UPPER(nombre_departamento) = UPPER(?)"
+                    params = [nombre] + [top_n]
+                rows = conn.execute(f"""
+                    SELECT cod_departamento, nombre_departamento,
+                           partido_id, nombre_partido AS nombre_agrupacion,
+                           candidato AS nombre_candidato,
+                           votos, pct_votos_validos
+                    FROM fact_votos_departamento
+                    WHERE election_year=2026 AND vuelta=2 AND es_especial=0 {filter_clause}
+                    ORDER BY votos DESC
+                    LIMIT ?
+                """, params).fetchall()
+                result = []
+                for r in rows:
+                    ub = str(r["cod_departamento"]).zfill(2) + "0000"
+                    result.append({
+                        "partido_id": r["partido_id"],
+                        "nombre_agrupacion": r["nombre_agrupacion"],
+                        "nombre_candidato": r["nombre_candidato"],
+                        "votos_validos": r["votos"],
+                        "pct_votos_validos": r["pct_votos_validos"],
+                        "ubigeo": ub,
+                        "nombre_departamento": r["nombre_departamento"],
+                    })
+                return result
+
+            elif nivel_norm in ("provincia",):
+                filter_clause = ""
+                params2: list = [top_n]
+                if ubigeo:
+                    filter_clause = "AND SUBSTR('000000'||cod_provincia,-4) = SUBSTR(?,1,4)"
+                    params2 = [ubigeo[:4].zfill(4)] + [top_n]
+                elif nombre:
+                    filter_clause = "AND UPPER(nombre_provincia) = UPPER(?)"
+                    params2 = [nombre] + [top_n]
+                rows2 = conn.execute(f"""
+                    SELECT cod_provincia, nombre_provincia,
+                           partido_id, nombre_partido AS nombre_agrupacion,
+                           candidato AS nombre_candidato,
+                           votos, pct_votos_validos
+                    FROM fact_votos_provincia
+                    WHERE election_year=2026 AND vuelta=2 AND es_especial=0 {filter_clause}
+                    ORDER BY votos DESC
+                    LIMIT ?
+                """, params2).fetchall()
+                result2 = []
+                for r in rows2:
+                    ub = str(r["cod_provincia"]).zfill(4) + "00"
+                    result2.append({
+                        "partido_id": r["partido_id"],
+                        "nombre_agrupacion": r["nombre_agrupacion"],
+                        "nombre_candidato": r["nombre_candidato"],
+                        "votos_validos": r["votos"],
+                        "pct_votos_validos": r["pct_votos_validos"],
+                        "ubigeo": ub,
+                        "nombre_provincia": r["nombre_provincia"],
+                    })
+                return result2
+
+            else:  # distrito / ubigeo — also handles continente/pais_exterior via raise
+                if nivel_norm in ("continente", "pais_exterior", "ciudad"):
+                    raise ValueError(f"nivel '{nivel_norm}' not supported in denorm fast-path")
+                filter_clause2 = ""
+                params3: list = [top_n]
+                if ubigeo:
+                    filter_clause2 = "AND SUBSTR('000000'||ubigeo,-6) = SUBSTR('000000'||?,-6)"
+                    params3 = [ubigeo] + [top_n]
+                rows3 = conn.execute(f"""
+                    SELECT ubigeo, nombre_distrito,
+                           partido_id, nombre_partido AS nombre_agrupacion,
+                           candidato AS nombre_candidato,
+                           votos, pct_votos_validos
+                    FROM fact_votos_ubigeo
+                    WHERE election_year=2026 AND vuelta=2 AND es_especial=0 {filter_clause2}
+                    ORDER BY votos DESC
+                    LIMIT ?
+                """, params3).fetchall()
+                return [
+                    {
+                        "partido_id": r["partido_id"],
+                        "nombre_agrupacion": r["nombre_agrupacion"],
+                        "nombre_candidato": r["nombre_candidato"],
+                        "votos_validos": r["votos"],
+                        "pct_votos_validos": r["pct_votos_validos"],
+                        "ubigeo": r["ubigeo"],
+                        "nombre_distrito": r["nombre_distrito"],
+                    }
+                    for r in rows3
+                ]
+        finally:
+            conn.close()
+
+    def _resultados_geo_1v_denorm(self, nivel: str, filtro: str | None, top_n: int) -> list[dict] | None:
+        """Returns resultados_geo_2026_1v result from denorm. None = use OLTP."""
+        try:
+            conn = self._connect_denorm()
+            try:
+                nivel_norm = nivel.lower().strip() if nivel else "nacional"
+                if nivel_norm in ("nacional",):
+                    rows = conn.execute("""
+                        SELECT partido_id, nombre_partido, candidato,
+                               votos, pct_votos_validos,
+                               total_mesas, mesas_contabilizadas
+                        FROM fact_votos_nacional
+                        WHERE election_year=2026 AND vuelta=1 AND es_especial=0
+                        ORDER BY votos DESC LIMIT ?
+                    """, (top_n,)).fetchall()
+                elif nivel_norm in ("departamento", "region", "dpto"):
+                    if filtro:
+                        import unicodedata as _ud
+
+                        def _norm_dn(t: str) -> str:
+                            return "".join(c for c in _ud.normalize("NFKD", t) if not _ud.combining(c)).casefold()
+
+                        rows_all = conn.execute("""
+                            SELECT nombre_departamento, partido_id, nombre_partido, candidato,
+                                   votos, pct_votos_validos
+                            FROM fact_votos_departamento
+                            WHERE election_year=2026 AND vuelta=1 AND es_especial=0
+                        """).fetchall()
+                        rows = [r for r in rows_all if _norm_dn(r["nombre_departamento"]) == _norm_dn(filtro)][:top_n]
+                    else:
+                        rows = conn.execute("""
+                            SELECT partido_id, nombre_partido, candidato,
+                                   votos, pct_votos_validos
+                            FROM fact_votos_departamento
+                            WHERE election_year=2026 AND vuelta=1 AND es_especial=0
+                            ORDER BY votos DESC LIMIT ?
+                        """, (top_n,)).fetchall()
+                else:
+                    return None
+                return [dict(r) for r in rows]
+            finally:
+                conn.close()
+        except Exception:
+            return None
 
     @staticmethod
     def now_iso() -> str:
@@ -2103,6 +2293,34 @@ class DataStore:
         vuelta = 1 if int(vuelta) == 1 else 2
         top_n = max(1, min(int(top_n), 30))
         col, val = self._resolve_geo_filter_2021(vuelta, geo_query)
+        if self.denorm_available and not col:
+            try:
+                conn = self._connect_denorm()
+                rows = conn.execute("""
+                    SELECT partido_id, nombre_partido, candidato, votos
+                    FROM fact_votos_nacional
+                    WHERE election_year=2021 AND vuelta=? AND es_especial=0
+                    ORDER BY votos DESC
+                """, (vuelta,)).fetchall()
+                conn.close()
+                return {
+                    "vuelta": vuelta,
+                    "nivel": "nacional",
+                    "filtro": None,
+                    "mesas": 0,
+                    "votos_emitidos": 0,
+                    "top": [
+                        {
+                            "partido_id": str(r["partido_id"] or ""),
+                            "nombre_partido": str(r["nombre_partido"] or ""),
+                            "candidato": str(r["candidato"] or ""),
+                            "total_votos": int(r["votos"] or 0),
+                        }
+                        for r in rows
+                    ],
+                }
+            except Exception as e:
+                _logger.debug("denorm fast-path failed for aggregate_votes_2021, falling back to OLTP: %s", e)
         where = "WHERE v.vuelta = ?"
         params: list[Any] = [vuelta]
         if col and val:
@@ -2468,6 +2686,20 @@ class DataStore:
         downstream statistical calc (HHI, participation, etc.).
         """
         v = 1 if int(vuelta) == 1 else 2
+        if self.denorm_available:
+            try:
+                conn = self._connect_denorm()
+                rows = conn.execute("""
+                    SELECT partido_id, nombre_partido, candidato,
+                           votos, pct_votos_validos
+                    FROM fact_votos_nacional
+                    WHERE election_year=2021 AND vuelta=? AND es_especial=0
+                    ORDER BY votos DESC
+                """, (v,)).fetchall()
+                conn.close()
+                return [dict(r) for r in rows]
+            except Exception as e:
+                _logger.debug("denorm fast-path failed for summary_2021, falling back to OLTP: %s", e)
         with self._connect() as conn:
             agg = conn.execute(
                 """
@@ -2799,6 +3031,22 @@ class DataStore:
 
     def summary_2026_1v(self) -> dict[str, Any]:
         """Nacional aggregated summary for 2026 1V."""
+        if self.denorm_available:
+            try:
+                conn = self._connect_denorm()
+                rows = conn.execute("""
+                    SELECT partido_id, nombre_partido, candidato,
+                           votos, pct_votos_validos,
+                           total_mesas, mesas_contabilizadas,
+                           total_electores_habiles, total_votos_emitidos, total_votos_validos
+                    FROM fact_votos_nacional
+                    WHERE election_year=2026 AND vuelta=1 AND es_especial=0
+                    ORDER BY votos DESC
+                """).fetchall()
+                conn.close()
+                return [dict(r) for r in rows]
+            except Exception as e:
+                _logger.debug("denorm fast-path failed for summary_2026_1v, falling back to OLTP: %s", e)
         with self._connect() as conn:
             agg = conn.execute(
                 """
@@ -3043,6 +3291,23 @@ class DataStore:
 
     def summary_2026_sv(self) -> dict[str, Any]:
         """Nacional aggregated summary for 2026 SV (cifras oficiales C only)."""
+        if self.denorm_available:
+            try:
+                conn = self._connect_denorm()
+                rows = conn.execute("""
+                    SELECT partido_id, nombre_partido AS nombre_agrupacion,
+                           candidato AS nombre_candidato,
+                           votos, pct_votos_validos,
+                           total_mesas, mesas_contabilizadas,
+                           total_electores_habiles, total_votos_emitidos, total_votos_validos
+                    FROM fact_votos_nacional
+                    WHERE election_year=2026 AND vuelta=2 AND es_especial=0
+                    ORDER BY votos DESC
+                """).fetchall()
+                conn.close()
+                return [dict(r) for r in rows]
+            except Exception as e:
+                _logger.debug("denorm fast-path failed for summary_2026_sv, falling back to OLTP: %s", e)
         with self._connect() as conn:
             agg = conn.execute(
                 """
@@ -3108,6 +3373,11 @@ class DataStore:
         if nivel_norm not in {"nacional", "departamento", "provincia", "distrito"}:
             raise ValueError("nivel debe ser nacional, departamento, provincia o distrito")
         top_n_eff = max(1, min(int(top_n), 50))
+
+        if self.denorm_available:
+            result = self._resultados_geo_1v_denorm(nivel_norm, filtro, top_n_eff)
+            if result is not None:
+                return result
 
         clauses: list[str] = []
         params: list[Any] = []
@@ -5836,6 +6106,34 @@ class DataStore:
         }
 
     def query_sv_nacional(self) -> list[dict[str, Any]]:
+        if self.denorm_available:
+            try:
+                conn = self._connect_denorm()
+                rows = conn.execute("""
+                    SELECT partido_id, nombre_partido AS nombre_agrupacion,
+                           candidato AS nombre_candidato,
+                           votos AS votos_validos, pct_votos_validos,
+                           mesas_contabilizadas AS contabilizadas,
+                           total_mesas AS total_actas,
+                           total_electores_habiles, total_votos_emitidos
+                    FROM fact_votos_nacional
+                    WHERE election_year=2026 AND vuelta=2 AND es_especial=0
+                    ORDER BY votos DESC LIMIT 20
+                """).fetchall()
+                conn.close()
+                result = []
+                for r in rows:
+                    d = dict(r)
+                    total_actas = d.get("total_actas") or 0
+                    contabilizadas = d.get("contabilizadas") or 0
+                    d["actas_contabilizadas_pct"] = round(contabilizadas / total_actas * 100, 2) if total_actas else 0.0
+                    electores = d.get("total_electores_habiles") or 0
+                    emitidos = d.get("total_votos_emitidos") or 0
+                    d["participacion_ciudadana"] = round(emitidos / electores * 100, 2) if electores else 0.0
+                    result.append(d)
+                return result
+            except Exception as e:
+                _logger.debug("denorm fast-path failed for query_sv_nacional, falling back to OLTP: %s", e)
         with self._connect() as conn:
             rows = conn.execute(
                 """SELECT partido_id, nombre_candidato, nombre_agrupacion, votos_validos,
@@ -5851,6 +6149,11 @@ class DataStore:
         Query SV results by geographic level.
         nivel: 'nacional' | 'continente' | 'pais_exterior' | 'departamento' | 'provincia' | 'distrito' | 'ciudad'
         """
+        if self.denorm_available:
+            try:
+                return self._query_sv_geo_denorm(nivel, ubigeo, nombre, top_n)
+            except Exception as e:
+                _logger.debug("denorm sv_geo fast-path failed: %s", e)
         with self._connect() as conn:
             if nivel == "nacional":
                 rows = conn.execute(
@@ -6018,6 +6321,21 @@ class DataStore:
         Devuelve los denominadores oficiales (padrón, emitidos, válidos,
         blancos, nulos) que permiten verificar cualquier claim porcentual.
         """
+        if self.denorm_available:
+            try:
+                conn = self._connect_denorm()
+                row = conn.execute("""
+                    SELECT total_mesas, mesas_contabilizadas,
+                           total_electores_habiles, total_votos_emitidos, total_votos_validos
+                    FROM fact_votos_nacional
+                    WHERE election_year=2026 AND vuelta=1 AND es_especial=0
+                    LIMIT 1
+                """).fetchone()
+                conn.close()
+                if row:
+                    return dict(row)
+            except Exception as e:
+                _logger.debug("denorm fast-path failed for get_totales_nacionales_1v, falling back to OLTP: %s", e)
         with self._connect() as conn:
             row = conn.execute(
                 """SELECT COUNT(*) AS mesas,
@@ -6079,6 +6397,19 @@ class DataStore:
     def get_top_partidos_1v(self, top_n: int = 10) -> list[dict[str, Any]]:
         """Top-N partidos a nivel nacional en 1V (incluye blancos/nulos)."""
         top_n = max(1, min(int(top_n or 10), 50))
+        if self.denorm_available:
+            try:
+                conn = self._connect_denorm()
+                rows = conn.execute("""
+                    SELECT partido_id, nombre_partido, candidato, votos, pct_votos_validos
+                    FROM fact_votos_nacional
+                    WHERE election_year=2026 AND vuelta=1 AND es_especial=0
+                    ORDER BY votos DESC LIMIT ?
+                """, (top_n,)).fetchall()
+                conn.close()
+                return [dict(r) for r in rows]
+            except Exception as e:
+                _logger.debug("denorm fast-path failed for get_top_partidos_1v, falling back to OLTP: %s", e)
         with self._connect() as conn:
             rows = conn.execute(
                 """SELECT v.partido_id, COALESCE(a.nombre,'') AS nombre,
