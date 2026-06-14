@@ -1,6 +1,6 @@
 # ONPE MCP — Elecciones Presidenciales Perú 2026 + 2021 (histórico)
 
-[![Tests](https://img.shields.io/badge/tests-600%2B%20passing-brightgreen)]() [![Python](https://img.shields.io/badge/python-3.11+-blue)]() [![MCP](https://img.shields.io/badge/protocol-MCP-purple)]() [![Coverage 2026-2V](https://img.shields.io/badge/2026%202V%20cobertura-98.25%25-success)]() [![Data 2021](https://img.shields.io/badge/2021%20data-complete-blue)]()
+[![Tests](https://img.shields.io/badge/tests-410%2B%20passing-brightgreen)]() [![Python](https://img.shields.io/badge/python-3.11+-blue)]() [![MCP](https://img.shields.io/badge/protocol-MCP-purple)]() [![Data 2021](https://img.shields.io/badge/2021%20data-complete-blue)]()
 
 Servidor **[Model Context Protocol](https://modelcontextprotocol.io/)** de grado empresarial que expone:
 - **2026**: Las **92,766 mesas presidenciales** de 1ª y 2ª vuelta con resultados oficiales ONPE
@@ -219,6 +219,44 @@ onpe-mcp/
 | **1b** | `mesas_data` + `votos` SQLite (snapshot hidratado) | ~5 ms |
 | **2** | API ONPE live (`resultadoelectoral.onpe.gob.pe`) | ~1-8 s |
 | **3** | Compendio cualitativo (535 hechos verificados) | ~0 ms |
+
+### Modelo Analítico BI (`onpe_denorm.db`)
+
+Pre-materializa **todas las permutaciones** `election_year × vuelta × geo × partido` para las 4 elecciones disponibles. Incluye votos del exterior como ciudadano de primera clase.
+
+**Tablas fact (8 tablas, ~8 M filas totales):**
+
+| Tabla | Grain | Filas |
+|-------|-------|------:|
+| `fact_votos_mesa` | election × vuelta × mesa × partido | ~6.5 M |
+| `fact_votos_ubigeo` | election × vuelta × distrito × partido | ~150 K |
+| `fact_votos_provincia` | election × vuelta × provincia × partido | ~14 K |
+| `fact_votos_departamento` | election × vuelta × departamento × partido | ~1.9 K |
+| `fact_votos_pais` | election × vuelta × país × partido | ~5 K |
+| `fact_votos_nacional` | election × vuelta × partido | 72 |
+| `dim_eleccion` | proceso electoral | 4 |
+| `dim_partido` | partido × elección | 72 |
+
+**Benchmark vs OLTP (26 queries, mediana de 5 ejecuciones):**
+
+> **99.6% reducción de tiempo — speedup mediano 1,116×**
+
+| Categoría | OLTP | Denorm | Speedup |
+|-----------|-----:|-------:|--------:|
+| Nacionales / departamento / provincia | 250–10,000 ms | <1 ms | >999× |
+| Mesa range (1–500 mesas) | 388 ms | 36 ms | 10.7× |
+| País exterior | 200–230 ms | 2–3 ms | 87–120× |
+| Mesa exacta | ~0.1 ms | ~0.1 ms | ~1× |
+
+**Construir / validar el modelo:**
+```bash
+python scripts/build_denorm.py                # reconstruye (~108 s, ~1.9 GB)
+python scripts/build_denorm.py --validate-only # solo valida (7/7 checks)
+python scripts/benchmark_denorm.py            # corre 26 queries OLTP vs Denorm
+```
+
+> El modelo se activa automáticamente cuando `data/onpe_denorm.db` existe.
+> Si no existe, `DataStore` usa los paths OLTP originales sin degradación.
 
 ---
 
