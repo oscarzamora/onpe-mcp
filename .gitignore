@@ -1,0 +1,40 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+.env
+.pytest_cache/
+
+# SQLite local DB (regenerable desde scrapers — ver onpe_bootstrap_snapshot / onpe_sv_bootstrap)
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# Build / packaging artifacts (regenerable con `pip install -e .`)
+*.egg-info/
+*.egg
+build/
+dist/
+.eggs/
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# IDE / editor metadata local
+.idea/
+.vscode/
+*.swp
+*.bak
+
+# Coverage / type-check caches
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Local ad-hoc analysis outputs (regenerable via scripts/_stats_*.py)
+stats_*_output.txt

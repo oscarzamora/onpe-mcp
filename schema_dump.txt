@@ -1,0 +1,366 @@
+
+                CREATE TABLE IF NOT EXISTS mesa_cache (
+                    codigo_mesa TEXT PRIMARY KEY,
+                    payload_json TEXT NOT NULL,
+                    fetched_at TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    id_eleccion INTEGER NOT NULL,
+                    payload_hash TEXT NOT NULL,
+                    schema_version INTEGER NOT NULL DEFAULT 1
+                );
+
+                CREATE TABLE IF NOT EXISTS mesas_data (
+                    codigo_mesa TEXT PRIMARY KEY,
+                    ubigeo TEXT,
+                    local_votacion TEXT,
+                    electores_habiles INTEGER,
+                    votos_emitidos INTEGER,
+                    votos_validos INTEGER,
+                    blancos INTEGER,
+                    nulos INTEGER,
+                    impugnados INTEGER,
+                    estado_acta TEXT,
+                    fetched_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS votos (
+                    codigo_mesa TEXT NOT NULL,
+                    partido_id TEXT NOT NULL,
+                    votos INTEGER,
+                    fetched_at TEXT NOT NULL,
+                    PRIMARY KEY (codigo_mesa, partido_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS agrupaciones (
+                    partido_id TEXT PRIMARY KEY,
+                    nombre TEXT,
+                    fetched_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS foreign_catalog (
+                    ubigeo TEXT PRIMARY KEY,
+                    continente TEXT,
+                    pais TEXT,
+                    ciudad TEXT,
+                    fetched_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS ubigeo_location_cache (
+                    ubigeo TEXT PRIMARY KEY,
+                    ambito TEXT,
+                    departamento TEXT,
+                    ciudad TEXT,
+                    pais TEXT,
+                    fetched_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS votos_by_ubigeo_partido (
+                    ubigeo TEXT NOT NULL,
+                    partido_id TEXT NOT NULL,
+                    total_votos INTEGER NOT NULL,
+                    fetched_at TEXT NOT NULL,
+                    PRIMARY KEY (ubigeo, partido_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS geo_query_cache (
+                    query_key TEXT PRIMARY KEY,
+                    payload_json TEXT NOT NULL,
+                    fetched_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_mesas_ubigeo ON mesas_data (ubigeo);
+                CREATE INDEX IF NOT EXISTS idx_mesas_ubigeo6_expr ON mesas_data (SUBSTR('00000' || ubigeo, -6));
+                CREATE INDEX IF NOT EXISTS idx_mesas_estado ON mesas_data (estado_acta);
+                CREATE INDEX IF NOT EXISTS idx_votos_partido ON votos (partido_id);
+                CREATE INDEX IF NOT EXISTS idx_foreign_pais ON foreign_catalog (pais);
+                CREATE INDEX IF NOT EXISTS idx_foreign_ciudad ON foreign_catalog (ciudad);
+                CREATE INDEX IF NOT EXISTS idx_ubigeo_location_depto ON ubigeo_location_cache (departamento);
+                CREATE INDEX IF NOT EXISTS idx_ubigeo_location_ciudad ON ubigeo_location_cache (ciudad);
+                CREATE INDEX IF NOT EXISTS idx_votos_ubigeo_partido ON votos_by_ubigeo_partido (ubigeo, partido_id);
+
+                CREATE TABLE IF NOT EXISTS mesa_prefix_totals (
+                    prefix TEXT PRIMARY KEY,
+                    n_mesas INTEGER NOT NULL DEFAULT 0,
+                    mesas_con_votos INTEGER NOT NULL DEFAULT 0,
+                    votos_emitidos INTEGER NOT NULL DEFAULT 0,
+                    votos_validos INTEGER NOT NULL DEFAULT 0,
+                    rebuilt_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS mesa_prefix_party_summary (
+                    prefix TEXT NOT NULL,
+                    partido_id TEXT NOT NULL,
+                    total_votos INTEGER NOT NULL DEFAULT 0,
+                    n_mesas INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (prefix, partido_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_prefix_party ON mesa_prefix_party_summary (prefix, total_votos DESC);
+
+                CREATE TABLE IF NOT EXISTS mesa_winner (
+                    codigo_mesa TEXT PRIMARY KEY,
+                    partido_id TEXT NOT NULL,
+                    max_votos INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_mesa_winner_partido ON mesa_winner (partido_id);
+                CREATE INDEX IF NOT EXISTS idx_mesa_winner_mesa_partido ON mesa_winner (codigo_mesa, partido_id);
+
+                CREATE TABLE IF NOT EXISTS ubigeo_reniec (
+                    ubigeo TEXT PRIMARY KEY,
+                    distrito TEXT,
+                    provincia TEXT,
+                    departamento TEXT,
+                    distrito_norm TEXT,
+                    provincia_norm TEXT,
+                    departamento_norm TEXT,
+                    fetched_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_reniec_dept_norm ON ubigeo_reniec (departamento_norm);
+                CREATE INDEX IF NOT EXISTS idx_reniec_prov_norm ON ubigeo_reniec (provincia_norm);
+                CREATE INDEX IF NOT EXISTS idx_reniec_dist_norm ON ubigeo_reniec (distrito_norm);
+                CREATE INDEX IF NOT EXISTS idx_reniec_dept_upper ON ubigeo_reniec (UPPER(departamento));
+                CREATE INDEX IF NOT EXISTS idx_reniec_prov_upper ON ubigeo_reniec (UPPER(provincia));
+                CREATE INDEX IF NOT EXISTS idx_reniec_dist_upper ON ubigeo_reniec (UPPER(distrito));
+
+                CREATE TABLE IF NOT EXISTS ubigeo_onpe_api (
+                    ubigeo TEXT PRIMARY KEY,
+                    distrito TEXT,
+                    provincia TEXT,
+                    departamento TEXT,
+                    distrito_norm TEXT,
+                    provincia_norm TEXT,
+                    departamento_norm TEXT,
+                    fetched_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_onpe_api_dept_norm ON ubigeo_onpe_api (departamento_norm);
+                CREATE INDEX IF NOT EXISTS idx_onpe_api_prov_norm ON ubigeo_onpe_api (provincia_norm);
+                CREATE INDEX IF NOT EXISTS idx_onpe_api_dist_norm ON ubigeo_onpe_api (distrito_norm);
+
+                -- ═══ ELECCIONES 2021 (1V y 2V) ════════════════════════════════════════════
+
+                CREATE TABLE IF NOT EXISTS mesas_2021 (
+                    vuelta INTEGER NOT NULL,
+                    codigo_mesa TEXT NOT NULL,
+                    ubigeo TEXT,
+                    departamento TEXT,
+                    provincia TEXT,
+                    distrito TEXT,
+                    tipo_eleccion TEXT,
+                    descrip_estado_acta TEXT,
+                    tipo_observacion TEXT,
+                    n_cvas INTEGER,
+                    n_elec_habil INTEGER,
+                    votos_vb INTEGER,
+                    votos_vn INTEGER,
+                    votos_vi INTEGER,
+                    votos_emitidos INTEGER,
+                    votos_validos INTEGER,
+                    fetched_at TEXT NOT NULL,
+                    PRIMARY KEY (vuelta, codigo_mesa)
+                );
+                CREATE INDEX IF NOT EXISTS idx_mesas2021_geo ON mesas_2021 (vuelta, departamento, provincia, distrito);
+                CREATE INDEX IF NOT EXISTS idx_mesas2021_ubigeo ON mesas_2021 (vuelta, ubigeo);
+
+                CREATE TABLE IF NOT EXISTS votos_2021 (
+                    vuelta INTEGER NOT NULL,
+                    codigo_mesa TEXT NOT NULL,
+                    partido_id TEXT NOT NULL,
+                    votos INTEGER NOT NULL,
+                    fetched_at TEXT NOT NULL,
+                    PRIMARY KEY (vuelta, codigo_mesa, partido_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_votos2021_partido ON votos_2021 (vuelta, partido_id);
+                CREATE INDEX IF NOT EXISTS idx_votos2021_mesa ON votos_2021 (vuelta, codigo_mesa);
+
+                CREATE TABLE IF NOT EXISTS partidos_2021 (
+                    vuelta INTEGER NOT NULL,
+                    partido_id TEXT NOT NULL,
+                    nombre_partido TEXT NOT NULL,
+                    candidato TEXT NOT NULL,
+                    fetched_at TEXT NOT NULL,
+                    PRIMARY KEY (vuelta, partido_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_partidos2021_nombre ON partidos_2021 (vuelta, nombre_partido);
+                CREATE INDEX IF NOT EXISTS idx_partidos2021_candidato ON partidos_2021 (vuelta, candidato);
+
+                -- ═══ SEGUNDA VUELTA (SV) ═══════════════════════════════════════════════════
+
+                CREATE TABLE IF NOT EXISTS mesas_sv (
+                    codigo_mesa TEXT PRIMARY KEY,
+                    id_ubigeo TEXT,
+                    nombre_local TEXT,
+                    id_ambito INTEGER,
+                    electores_habiles INTEGER,
+                    votos_emitidos INTEGER,
+                    votos_validos INTEGER,
+                    total_asistentes INTEGER,
+                    codigo_estado_acta TEXT,
+                    fetched_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_mesas_sv_ubigeo ON mesas_sv (id_ubigeo);
+                CREATE INDEX IF NOT EXISTS idx_mesas_sv_estado ON mesas_sv (codigo_estado_acta);
+
+                CREATE TABLE IF NOT EXISTS votos_sv (
+                    codigo_mesa TEXT NOT NULL,
+                    partido_id TEXT NOT NULL,
+                    votos INTEGER,
+                    fetched_at TEXT NOT NULL,
+                    PRIMARY KEY (codigo_mesa, partido_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_votos_sv_partido ON votos_sv (partido_id);
+                CREATE INDEX IF NOT EXISTS idx_votos_sv_mesa ON votos_sv (codigo_mesa);
+
+                CREATE TABLE IF NOT EXISTS agrupaciones_sv (
+                    partido_id TEXT PRIMARY KEY,
+                    nombre TEXT,
+                    fetched_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS ubicaciones_sv (
+                    ubigeo TEXT PRIMARY KEY,
+                    ambito TEXT,
+                    departamento TEXT,
+                    provincia TEXT,
+                    distrito TEXT,
+                    continente TEXT,
+                    pais TEXT,
+                    ciudad TEXT,
+                    fetched_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_ubicaciones_sv_dep ON ubicaciones_sv (departamento);
+                CREATE INDEX IF NOT EXISTS idx_ubicaciones_sv_prov ON ubicaciones_sv (provincia);
+
+                CREATE TABLE IF NOT EXISTS locales_reasignados_sv (
+                    nro INTEGER PRIMARY KEY,
+                    odpe TEXT,
+                    dpto TEXT,
+                    provincia TEXT,
+                    distrito TEXT,
+                    ccpp TEXT,
+                    nombre_local_original TEXT,
+                    nombre_local_nuevo TEXT,
+                    motivo TEXT,
+                    mesas_afectadas INTEGER,
+                    estado_parseo TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_reasignados_dpto ON locales_reasignados_sv (dpto);
+                CREATE INDEX IF NOT EXISTS idx_reasignados_motivo ON locales_reasignados_sv (motivo);
+
+                -- sv_resumen_* tables loaded from scraper's resumen/ files
+
+                CREATE TABLE IF NOT EXISTS sv_resumen_nacional (
+                    partido_id TEXT PRIMARY KEY,
+                    nombre_candidato TEXT,
+                    nombre_agrupacion TEXT,
+                    votos_validos INTEGER,
+                    pct_votos_validos REAL,
+                    pct_votos_emitidos REAL,
+                    actas_contabilizadas_pct REAL,
+                    contabilizadas INTEGER,
+                    total_actas INTEGER,
+                    participacion_ciudadana REAL,
+                    fecha_actualizacion TEXT,
+                    fuente TEXT,
+                    loaded_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS sv_resumen_departamentos (
+                    ubigeo TEXT NOT NULL,
+                    partido_id TEXT NOT NULL,
+                    nombre_candidato TEXT,
+                    nombre_agrupacion TEXT,
+                    votos_validos INTEGER,
+                    pct_votos_validos REAL,
+                    pct_votos_emitidos REAL,
+                    total_votos_validos_geo INTEGER,
+                    total_votos_emitidos_geo INTEGER,
+                    fuente TEXT,
+                    loaded_at TEXT NOT NULL,
+                    PRIMARY KEY (ubigeo, partido_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_sv_rdept_ubigeo ON sv_resumen_departamentos (ubigeo);
+
+                CREATE TABLE IF NOT EXISTS sv_resumen_provincias (
+                    ubigeo TEXT NOT NULL,
+                    partido_id TEXT NOT NULL,
+                    nombre_candidato TEXT,
+                    nombre_agrupacion TEXT,
+                    nombre_geo TEXT,
+                    votos_validos INTEGER,
+                    pct_votos_validos REAL,
+                    pct_votos_emitidos REAL,
+                    total_votos_validos_geo INTEGER,
+                    total_votos_emitidos_geo INTEGER,
+                    fuente TEXT,
+                    loaded_at TEXT NOT NULL,
+                    PRIMARY KEY (ubigeo, partido_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_sv_rprov_ubigeo ON sv_resumen_provincias (ubigeo);
+                CREATE INDEX IF NOT EXISTS idx_sv_rprov_nombre_geo ON sv_resumen_provincias (nombre_geo);
+
+                CREATE TABLE IF NOT EXISTS sv_resumen_cobertura (
+                    ubigeo TEXT PRIMARY KEY,
+                    nombre_departamento TEXT,
+                    actas_contabilizadas INTEGER,
+                    pct_actas_contabilizadas REAL,
+                    fuente TEXT,
+                    loaded_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_sv_rcob_ubigeo ON sv_resumen_cobertura (ubigeo);
+
+                -- CTAS aggregation tables (distrito and ciudad level — scraper doesn't pre-compute these)
+
+                CREATE TABLE IF NOT EXISTS sv_agg_distrito (
+                    ubigeo TEXT NOT NULL,
+                    partido_id TEXT NOT NULL,
+                    nombre_candidato TEXT,
+                    votos INTEGER,
+                    total_mesas INTEGER,
+                    mesas_contabilizadas INTEGER,
+                    rebuilt_at TEXT NOT NULL,
+                    PRIMARY KEY (ubigeo, partido_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_sv_agg_distrito_ubigeo ON sv_agg_distrito (ubigeo);
+
+                CREATE TABLE IF NOT EXISTS sv_agg_ciudad (
+                    ubigeo TEXT NOT NULL,
+                    ciudad TEXT NOT NULL,
+                    partido_id TEXT NOT NULL,
+                    nombre_candidato TEXT,
+                    votos INTEGER,
+                    total_mesas INTEGER,
+                    mesas_contabilizadas INTEGER,
+                    rebuilt_at TEXT NOT NULL,
+                    PRIMARY KEY (ubigeo, ciudad, partido_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_sv_agg_ciudad_ubigeo ON sv_agg_ciudad (ubigeo);
+                CREATE INDEX IF NOT EXISTS idx_sv_agg_ciudad_nombre ON sv_agg_ciudad (ciudad);
+
+                -- Vote transfer projection table
+                CREATE TABLE IF NOT EXISTS proyeccion_sv_by_ubigeo (
+                    ubigeo TEXT PRIMARY KEY,
+                    votos_1v_total INTEGER,
+                    votos_proyectados_keiko INTEGER,
+                    votos_proyectados_sanchez INTEGER,
+                    votos_proyectados_bn INTEGER,
+                    votos_abstencion_estimada INTEGER,
+                    rebuilt_at TEXT NOT NULL
+                );
+
+                -- Transfer map seeds (static knowledge)
+                CREATE TABLE IF NOT EXISTS voto_transfer_map (
+                    partido_nombre_norm TEXT PRIMARY KEY,
+                    peso_keiko REAL NOT NULL,
+                    peso_sanchez REAL NOT NULL,
+                    peso_bn REAL NOT NULL,
+                    fuente TEXT NOT NULL,
+                    loaded_at TEXT NOT NULL
+                );
+
+                -- Scraper commit guard (avoid redundant full rebuilds)
+                CREATE TABLE IF NOT EXISTS sv_sync_meta (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                
+=====

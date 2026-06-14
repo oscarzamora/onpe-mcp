@@ -1,0 +1,10 @@
+{
+  "servers": {
+    "onpe-mcp": {
+      "type": "stdio",
+      "command": "C:\\Users\\ozamo\\AppData\\Local\\Programs\\Python\\Python313\\Scripts\\onpe-mcp.exe",
+      "args": [],
+      "env": {}
+    }
+  }
+}
