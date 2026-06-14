@@ -103,6 +103,8 @@ onpe_get_mesa("900100")                 # mesa 2026
 
 La base SQLite es 100% derivable de archivos planos, garantizando trazabilidad, reproducibilidad y auditoría.
 
+> Si necesitas llevar esta hidratación a otra plataforma (MySQL, SQL Server, Snowflake o Fabric Warehouse), revisa el plan dedicado: [docs/plan-multi-db-hydration.md](docs/plan-multi-db-hydration.md).
+
 ### Pipeline de bootstrap (orden de ejecución)
 
 ```
