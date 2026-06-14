@@ -292,6 +292,7 @@ def test_geo_domestico_loreto(monkeypatch) -> None:
 def test_legislativo_senadores_para_cusco(monkeypatch) -> None:
     """'senadores top 10 para Cuzco' debe resolver como intent=legislative_top_candidate
     usando la preposición 'para' para extraer el distrito 'Cuzco'."""
+    monkeypatch.setattr(server_module, "_is_local_only", lambda: False)
     monkeypatch.setattr(
         server_module.onpe_api,
         "resolve_district",
@@ -598,6 +599,7 @@ def test_senadores_endpoint_no_disponible_respuesta_graceful(monkeypatch) -> Non
     """Si el endpoint de senadores devuelve HTML/falla, debe retornar respuesta útil, no excepción."""
     from onpe_mcp.onpe_api import OnpeApiError, DistrictItem
 
+    monkeypatch.setattr(server_module, "_is_local_only", lambda: False)
     monkeypatch.setattr(
         server_module.onpe_api,
         "resolve_district",
@@ -639,6 +641,26 @@ def test_db_vacia_retorna_db_not_hydrated(monkeypatch) -> None:
     assert "next_step" in data
     assert data["total_mesas_local"] == 0
     assert "bootstrap" in data["answer"].lower() or "hidrat" in data["answer"].lower()
+
+
+def test_onpe_get_mesa_local_only_no_live(monkeypatch) -> None:
+    monkeypatch.setattr(
+        server_module,
+        "settings",
+        dataclasses.replace(server_module.settings, local_only=True),
+    )
+    monkeypatch.setattr(server_module.store, "get_cached_mesa", lambda *a, **k: None)
+    monkeypatch.setattr(server_module.store, "get_mesa_from_local", lambda *a, **k: None)
+
+    def _should_not_call_live(*_a, **_kw):
+        raise AssertionError("No debe llamar API live en local-only")
+
+    monkeypatch.setattr(server_module.onpe_api, "get_mesa", _should_not_call_live)
+
+    result = server_module.onpe_get_mesa("900100")
+    assert result["ok"] is False
+    err = (result.get("errors") or [{}])[0]
+    assert err.get("code") == "DATA_NOT_AVAILABLE_LOCAL"
 
 
 # ---------------------------------------------------------------------------

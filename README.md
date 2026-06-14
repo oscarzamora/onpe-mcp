@@ -6,7 +6,7 @@ Servidor **[Model Context Protocol](https://modelcontextprotocol.io/)** de grado
 - **2026**: Las **92,766 mesas presidenciales** de 1ª y 2ª vuelta con resultados oficiales ONPE
 - **2021**: Dataset completo histórico de **86,488 mesas** (1ª y 2ª vuelta)
 
-Compatible con cualquier asistente de IA con soporte MCP (Claude, GPT, Gemini, etc.). Responde en **menos de un segundo** con datos de caché local o API live.
+Compatible con cualquier asistente de IA con soporte MCP (Claude, GPT, Gemini, etc.). Responde en **menos de un segundo** con datos locales de SQLite.
 
 ## ¿Qué es esto? (para quienes no son técnicos)
 
@@ -39,7 +39,7 @@ Imagina que puedes **preguntarle a un asistente de IA** cosas como:
 | Locales reubicados entre vueltas | "qué locales se reasignaron en Trujillo" |
 | Votos de un candidato | "cuántos votos sacó Rafael López Aliaga a nivel nacional en 2026" |
 | Resultados peruanos en el exterior | "quién ganó entre los peruanos en Suecia en 2026" |
-| Legislativo | "quién fue el diputado más votado en Lima" |
+| Legislativo (modo local-only) | "quién fue el diputado más votado en Lima" *(retorna no disponible local)* |
 | Contexto electoral y verificación | "¿qué es el STAE?, ¿puede manipular votos?" |
 | Análisis profundo 900K | Ver [`docs/analisis-mesas-900k.md`](docs/analisis-mesas-900k.md) |
 
@@ -48,14 +48,14 @@ Imagina que puedes **preguntarle a un asistente de IA** cosas como:
 1. **Tú preguntas** en lenguaje natural — no necesitas saber códigos ni formatos especiales.
 2. **El asistente entiende** qué quieres (una mesa, una región, un candidato…).
 3. **Primero busca en la base de datos local** — respuesta en milisegundos, sin internet.
-4. **Si no lo tiene guardado**, consulta directamente la ONPE — un poco más lento pero siempre actualizado.
+4. **Si no lo tiene guardado**, responde que falta en la base local para mantener modo local-only.
 5. **Si la pregunta es sobre el proceso electoral** (fraude, STAE, segunda vuelta…), responde con un compendio de 535 hechos verificados.
 
 > La base de datos local se descarga automáticamente la primera vez que arrancas el servidor (~2 minutos). Después de eso, todo es instantáneo.
 
 ---
 
-Estrategia **cache-first** de 3 tiers: **SQLite denorm local** (`<100 ms`) → **API ONPE live** (`~1-8 s`) → **compendio cualitativo verificable** de 535 hechos sobre el proceso electoral. Soporte completo para 1V, 2V y comparaciones entre vueltas.
+Estrategia **cache-first** local: **SQLite denorm local** (`<100 ms`) → **compendio cualitativo verificable** de 535 hechos sobre el proceso electoral. Soporte completo para 1V, 2V y comparaciones entre vueltas.
 
 ---
 
@@ -154,8 +154,8 @@ onpe_sv_bootstrap()                   # carga 2V desde ../onpe-scraper-2026-2/
 onpe_sv_refresh()                     # re-importa 2V (UPSERT) — usar tras `git pull`
 
 # === Catálogos auxiliares ===
-onpe_sync_foreign_catalog()           # países y ciudades del exterior (live API)
-onpe_sync_domestic_catalog()          # ubigeos domésticos
+onpe_sync_foreign_catalog()           # deshabilitado en local-only (usa datos ya cargados)
+onpe_sync_domestic_catalog()          # deshabilitado en local-only (usa datos ya cargados)
 ```
 
 ### Verificar estado de la DB
@@ -217,8 +217,7 @@ onpe-mcp/
 |------|--------|----------|
 | **0** | `onpe_denorm.db` — facts/dims y tablas runtime MCP | **<1 ms** |
 | **1** | Cache de query en SQLite local (`mesa_cache`, `query_cache`) | ~1-5 ms |
-| **2** | API ONPE live (`resultadoelectoral.onpe.gob.pe`) | ~1-8 s |
-| **3** | Compendio cualitativo (535 hechos verificados) | ~0 ms |
+| **2** | Compendio cualitativo (535 hechos verificados) | ~0 ms |
 
 ### Modelo Analítico BI (`onpe_denorm.db`)
 
@@ -266,9 +265,9 @@ python scripts/benchmark_denorm.py            # corre 26 queries OLTP vs Denorm
 
 | Tool | Descripción |
 |------|-------------|
-| `onpe_chat` | **Interfaz principal** — lenguaje natural, cache-first, intención automática. Soporta **2026 (1V+2V) + 2021 (histórico) + legislativo**. Routea automáticamente por año. |
-| `onpe_get_mesa` | Consulta mesa 2026 1V por código (cache → live API) |
-| `onpe_get_mesas_batch` | Hasta 200 mesas 2026 1V en paralelo (siempre live) |
+| `onpe_chat` | **Interfaz principal** — lenguaje natural, cache-first, intención automática. Soporta **2026 (1V+2V) + 2021 (histórico)** en modo local-only. Routea automáticamente por año. |
+| `onpe_get_mesa` | Consulta mesa 2026 1V por código desde cache/local DB |
+| `onpe_get_mesas_batch` | Hasta 200 mesas 2026 1V en paralelo desde cache/local DB |
 | `onpe_health` | Estado del servidor, DB 2026/2021 y cobertura de hidratación |
 
 ### Bootstrap y sincronización
@@ -280,8 +279,8 @@ python scripts/benchmark_denorm.py            # corre 26 queries OLTP vs Denorm
 | `onpe_2021_bootstrap` | Carga 2021 (1V+2V) desde `../peruvoto2021/data/*.csv` — ambas vueltas en tablas separadas |
 | `onpe_sv_bootstrap` | Carga 2026 2V desde `../onpe-scraper-2026-2/` (mesas + resumen + reasignados) |
 | `onpe_sv_refresh` | UPSERT idempotente de 2026 2V tras `git pull` del scraper |
-| `onpe_sync_foreign_catalog` | Sincroniza catálogo país/ciudad para mesas del exterior |
-| `onpe_sync_domestic_catalog` | Sincroniza catálogo de ubigeos peruanos |
+| `onpe_sync_foreign_catalog` | Deshabilitado en local-only (solo disponible fuera de modo estricto) |
+| `onpe_sync_domestic_catalog` | Deshabilitado en local-only (solo disponible fuera de modo estricto) |
 
 ### Chat especializado para 2021 (histórico)
 
@@ -438,7 +437,7 @@ Top 5 en Puno (4,520 mesas · 946,628 votos emitidos)
 "cuántos votos hubo en las mesas de Estados Unidos"
 ```
 
-### 🏛️ Legislativo (live API, 2026)
+### 🏛️ Legislativo (local-only)
 
 ```
 "quién fue el diputado más votado en Lima 2026"
@@ -446,6 +445,8 @@ Top 5 en Puno (4,520 mesas · 946,628 votos emitidos)
 "quién ganó los senadores en Arequipa"
 "cuántos votos sacó el primer diputado en Piura"
 ```
+
+> En modo local-only, estas consultas responden explícitamente que el dataset legislativo no está disponible en la base local.
 
 ### 🔍 Segmentos de mesas (2026)
 
@@ -560,9 +561,10 @@ Copia `.env.example` a `.env` para ajustar valores:
 
 | Variable | Default | Descripción |
 |----------|---------|-------------|
-| `ONPE_AUTO_HYDRATE_ON_DEMAND` | `true` | Consulta API ONPE para mesas faltantes con baja cobertura |
+| `ONPE_AUTO_HYDRATE_ON_DEMAND` | `false` | Hidrata mesas faltantes bajo demanda (requiere desactivar local-only) |
 | `ONPE_AUTO_HYDRATE_MAX_MESAS` | `20` | Máximo de mesas a hidratar bajo demanda por consulta |
-| `ONPE_AUTO_SYNC_FOREIGN_CATALOG_ON_DEMAND` | `true` | Sincroniza catálogo extranjero si no hay datos |
+| `ONPE_AUTO_SYNC_FOREIGN_CATALOG_ON_DEMAND` | `false` | Sincroniza catálogo extranjero bajo demanda (requiere desactivar local-only) |
+| `ONPE_LOCAL_ONLY` | `true` | Modo estricto local-only: deshabilita lecturas live de ONPE y sync live |
 
 ---
 
@@ -575,7 +577,7 @@ Copia `.env.example` a `.env` para ajustar valores:
 - **Operaciones idempotentes**: todos los `bootstrap_*` y `refresh` usan UPSERT — re-ejecutar es seguro.
 - **Sin datos en el repo**: `data/`, `*.db`, `*.db-wal`, `*.db-shm` están en `.gitignore`. Todo se regenera desde scrapers oficiales + dataset 2021.
 - **Manejo de errores tipado**: `VALIDATION_ERROR`, `GATEWAY_ERROR`, `API_ERROR` con `error_response()` consistente.
-- **Cache-first explícito**: cada respuesta indica el tier de origen (`tier_1_local_cache`, `tier_2_live_api`, `tier_3_knowledge_base`).
+- **Cache-first explícito**: cada respuesta indica el tier de origen (`tier_1_local_cache`, `tier_3_knowledge_base`).
 - **Verificación factual**: el compendio cualitativo (535 hechos) NO inventa cifras; cuando no hay datos cuantitativos derivables, responde con contexto institucional verificable o redirige a fuente oficial.
 - **Soporte multi-año**: router automático en `onpe_chat` detecta año (2021/2026) y delega a handler correspondiente.
 - **Soporte multi-modelo**: cualquier cliente MCP-compatible (Claude Desktop, Cline, Continue, Cody, agentes custom).

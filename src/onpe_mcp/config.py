@@ -17,6 +17,7 @@ class Settings:
     cache_ttl_seconds: int
     geo_query_cache_ttl_seconds: int
     auto_sync_foreign_catalog_on_demand: bool
+    local_only: bool
     bootstrap_on_startup: bool
     bootstrap_include_votes: bool
     auto_hydrate_on_demand: bool
@@ -58,6 +59,7 @@ class Settings:
         raw_ttl = os.getenv("ONPE_CACHE_TTL_SECONDS", "900").strip()
         raw_geo_ttl = os.getenv("ONPE_GEO_QUERY_CACHE_TTL_SECONDS", "300").strip()
         raw_auto_sync_catalog = os.getenv("ONPE_AUTO_SYNC_FOREIGN_CATALOG_ON_DEMAND", "true").strip().lower()
+        raw_local_only = os.getenv("ONPE_LOCAL_ONLY", "true").strip().lower()
         raw_bootstrap_on_startup = os.getenv("ONPE_BOOTSTRAP_ON_STARTUP", "true").strip().lower()
         raw_bootstrap_include_votes = os.getenv("ONPE_BOOTSTRAP_INCLUDE_VOTES", "true").strip().lower()
         raw_auto_hydrate = os.getenv("ONPE_AUTO_HYDRATE_ON_DEMAND", "true").strip().lower()
@@ -102,6 +104,7 @@ class Settings:
         cache_ttl_seconds = max(30, min(cache_ttl_seconds, 86400))
         geo_query_cache_ttl_seconds = max(10, min(geo_query_cache_ttl_seconds, 3600))
         auto_sync_foreign_catalog_on_demand = raw_auto_sync_catalog in {"1", "true", "yes", "y", "on"}
+        local_only = raw_local_only in {"1", "true", "yes", "y", "on"}
         bootstrap_on_startup = raw_bootstrap_on_startup in {"1", "true", "yes", "y", "on"}
         bootstrap_include_votes = raw_bootstrap_include_votes in {"1", "true", "yes", "y", "on"}
 
@@ -123,6 +126,7 @@ class Settings:
             cache_ttl_seconds=cache_ttl_seconds,
             geo_query_cache_ttl_seconds=geo_query_cache_ttl_seconds,
             auto_sync_foreign_catalog_on_demand=auto_sync_foreign_catalog_on_demand,
+            local_only=local_only,
             bootstrap_on_startup=bootstrap_on_startup,
             bootstrap_include_votes=bootstrap_include_votes,
             auto_hydrate_on_demand=auto_hydrate_on_demand,

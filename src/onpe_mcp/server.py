@@ -70,6 +70,11 @@ mcp = FastMCP("onpe-mcp")
 # Flag de sesión: el catálogo extranjero solo se sincroniza una vez por proceso.
 _foreign_catalog_synced: bool = False
 
+
+def _is_local_only() -> bool:
+    return bool(settings.local_only)
+
+
 # Patrones para detectar consultas de votos por candidato sin keyword "candidato".
 # Compilados una vez a nivel de módulo para evitar overhead por llamada.
 _CANDIDATE_VOTE_PATTERNS = [
@@ -609,6 +614,8 @@ def _coverage_verdict(coverage_pct: float) -> str:
 
 def _auto_hydrate_mesas(mesa_codes: list[str], id_eleccion: int, timeout: int) -> int:
     """Hidrata mesas faltantes desde ONPE API. Retorna cuántas se hidrataron exitosamente."""
+    if _is_local_only():
+        return 0
     hydrated = 0
     for code in mesa_codes:
         try:
@@ -791,6 +798,8 @@ def _build_coverage_block(
 
 def _hydrate_missing_city_department_by_prefix(mesa_prefix: str, id_eleccion: int) -> int:
     """Completa ciudad/departamento faltantes por ubigeo consultando ONPE y cacheando en SQLite."""
+    if _is_local_only():
+        return 0
     missing_ubigeos = store.find_ubigeos_missing_city_or_department_by_mesa_prefix(mesa_prefix, limit=50)
     if not missing_ubigeos:
         return 0
@@ -808,6 +817,8 @@ def _hydrate_missing_city_department_by_prefix(mesa_prefix: str, id_eleccion: in
 
 def _hydrate_missing_city_department_by_ubigeo_prefix(ubigeo_prefix: str, id_eleccion: int) -> int:
     """Completa ciudad/departamento faltantes por prefijo de ubigeo (departamento)."""
+    if _is_local_only():
+        return 0
     missing_ubigeos = store.find_ubigeos_missing_city_or_department_by_ubigeo_prefix(
         ubigeo_prefix,
         limit=50,
@@ -840,11 +851,28 @@ def onpe_get_mesa(
         code = validate_mesa_code(codigo_mesa)
         id_eleccion = max(1, int(id_eleccion))
         timeout = max(1, min(int(timeout), 120))
+        if _is_local_only() and force_live:
+            return error_response(
+                "force_live no está permitido en modo local-only.",
+                started_ms=started_ms,
+                code="LOCAL_ONLY_MODE",
+            )
 
         cached = None if force_live else store.get_cached_mesa(code, settings.cache_ttl_seconds)
         if cached is not None:
             logger.info("tool=onpe_get_mesa codigo_mesa=%s source=cache", code)
             return ok_response(cached, started_ms=started_ms, meta={"source": "sqlite_cache"})
+
+        local_bundle = store.get_mesa_from_local(code)
+        if local_bundle is not None:
+            return ok_response(local_bundle, started_ms=started_ms, meta={"source": "local_db"})
+
+        if _is_local_only():
+            return error_response(
+                f"No hay datos locales para la mesa {code}.",
+                started_ms=started_ms,
+                code="DATA_NOT_AVAILABLE_LOCAL",
+            )
 
         data = onpe_api.get_mesa(
             code,
@@ -913,12 +941,18 @@ def onpe_get_mesas_batch(
         for raw_code in codigos_mesa:
             try:
                 code = validate_mesa_code(str(raw_code))
-                mesa = onpe_api.get_mesa(
-                    code,
-                    id_eleccion=id_eleccion,
-                    timeout=timeout,
-                    base_url=base_url,
-                )
+                mesa = store.get_cached_mesa(code, settings.cache_ttl_seconds)
+                if mesa is None:
+                    mesa = store.get_mesa_from_local(code)
+                if mesa is None and _is_local_only():
+                    raise ValueError(f"No hay datos locales para la mesa {code}.")
+                if mesa is None:
+                    mesa = onpe_api.get_mesa(
+                        code,
+                        id_eleccion=id_eleccion,
+                        timeout=timeout,
+                        base_url=base_url,
+                    )
                 if mesa.get("found"):
                     found += 1
                 items.append({"codigo_mesa": code, "ok": True, "result": mesa, "error": None})
@@ -1039,6 +1073,12 @@ def onpe_sync_foreign_catalog(id_eleccion: int | None = None) -> dict[str, Any]:
     """Sincroniza país/ciudad extranjero directamente desde API ONPE hacia SQLite."""
     started_ms = now_ms()
     try:
+        if _is_local_only():
+            return error_response(
+                "onpe_sync_foreign_catalog está deshabilitado en modo local-only.",
+                started_ms=started_ms,
+                code="LOCAL_ONLY_MODE",
+            )
         election_id, rows = onpe_api.build_foreign_catalog(id_eleccion)
         upserted = store.upsert_foreign_catalog(rows)
         store.append_raw_event(
@@ -1071,6 +1111,12 @@ def onpe_sync_domestic_catalog(id_eleccion: int | None = None) -> dict[str, Any]
     Iquitos, Tarapoto, etc. aunque no sean nombres de distritos en RENIEC."""
     started_ms = now_ms()
     try:
+        if _is_local_only():
+            return error_response(
+                "onpe_sync_domestic_catalog está deshabilitado en modo local-only.",
+                started_ms=started_ms,
+                code="LOCAL_ONLY_MODE",
+            )
         election_id, rows = onpe_api.build_domestic_catalog(id_eleccion)
         upserted = store.upsert_domestic_ubigeos_from_api(rows)
         store.append_raw_event(
@@ -3548,6 +3594,26 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 10) -> dict[str,
             match = re.search(r"\b(?:en|para)\s+(.+)$", q, flags=re.IGNORECASE)
             if match:
                 distrito_expr = match.group(1).strip()
+            if _is_local_only():
+                distrito_nombre = distrito_expr.upper()
+                if distrito_nombre == "CUZCO":
+                    distrito_nombre = "CUSCO"
+                return ok_response(
+                    {
+                        "intent": "legislative_top_candidate",
+                        "answer": (
+                            "La consulta legislativa live está deshabilitada en modo local-only. "
+                            f"Sin datos legislativos locales para '{distrito_nombre}'."
+                        ),
+                        "result": {
+                            "cargo": cargo,
+                            "distrito": {"id": None, "nombre": distrito_nombre},
+                            "available": False,
+                        },
+                        "source": "local_only",
+                    },
+                    started_ms=started_ms,
+                )
 
             district: object
             try:
@@ -4109,6 +4175,9 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 10) -> dict[str,
                     _payload = store.get_mesa_from_local(_code)
                     _source = "local_db"
                 if _payload is None:
+                    if _is_local_only():
+                        items.append({"codigo_mesa": _code, "ok": False, "source": "local_only"})
+                        continue
                     try:
                         _payload = onpe_api.get_mesa(
                             _code,
@@ -4269,7 +4338,18 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 10) -> dict[str,
                     store.append_raw_event("onpe_chat_mesa_block", {"query": q, "prefix": _block_prefix, "total": _block_total})
                     return ok_response(data, started_ms=started_ms)
 
-            # Tier 2: Live API — wrapped para siempre devolver intent="mesa"
+            # Tier 2: local-only hard stop
+            if _is_local_only():
+                return ok_response(
+                    {
+                        "intent": "mesa",
+                        "answer": f"Detecté la mesa **{code}** pero no existe en la base local.",
+                        "result": None,
+                        "source": "local_only",
+                        "data_tier": "tier_1_local_cache",
+                    },
+                    started_ms=started_ms,
+                )
             try:
                 mesa = onpe_api.get_mesa(code, id_eleccion=max(1, int(id_eleccion)), timeout=max(1, int(timeout)))
                 store.upsert_mesa_bundle(code, mesa, source="onpe_live", id_eleccion=max(1, int(id_eleccion)))
@@ -5230,6 +5310,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 10) -> dict[str,
         if (
             geo_resolution is None
             and settings.auto_sync_foreign_catalog_on_demand
+            and not _is_local_only()
             and not _foreign_catalog_synced
             and extract_foreign_geo_candidates(q)
         ):
@@ -5683,23 +5764,27 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 10) -> dict[str,
                         payload = local_bundle
                         source = "local_db"
                     else:
-                        try:
-                            mesa = onpe_api.get_mesa(
-                                code,
-                                id_eleccion=max(1, int(id_eleccion)),
-                                timeout=max(1, int(timeout)),
-                            )
-                            store.upsert_mesa_bundle(
-                                code,
-                                mesa,
-                                source="onpe_live",
-                                id_eleccion=max(1, int(id_eleccion)),
-                            )
-                            payload = mesa
-                            source = "onpe_live"
-                        except Exception:
+                        if _is_local_only():
                             payload = None
-                            source = "error"
+                            source = "local_only"
+                        else:
+                            try:
+                                mesa = onpe_api.get_mesa(
+                                    code,
+                                    id_eleccion=max(1, int(id_eleccion)),
+                                    timeout=max(1, int(timeout)),
+                                )
+                                store.upsert_mesa_bundle(
+                                    code,
+                                    mesa,
+                                    source="onpe_live",
+                                    id_eleccion=max(1, int(id_eleccion)),
+                                )
+                                payload = mesa
+                                source = "onpe_live"
+                            except Exception:
+                                payload = None
+                                source = "error"
 
                 if payload:
                     mesa_data = payload.get("mesa_data") or {}
@@ -5851,7 +5936,16 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 10) -> dict[str,
                     store.append_raw_event("onpe_chat_mesa_block", {"query": q, "prefix": _block_prefix2})
                     return ok_response(data, started_ms=started_ms)
 
-            # Tier 2: Live API (mesa no está en DB local)
+            # Tier 2 deshabilitado en local-only
+            if _is_local_only():
+                return ok_response(
+                    {
+                        "intent": "mesa",
+                        "answer": f"Mesa {code}: no existe en la base local.",
+                        "source": "local_only",
+                    },
+                    started_ms=started_ms,
+                )
             try:
                 mesa = onpe_api.get_mesa(code, id_eleccion=max(1, int(id_eleccion)), timeout=max(1, int(timeout)))
                 store.upsert_mesa_bundle(code, mesa, source="onpe_live", id_eleccion=max(1, int(id_eleccion)))
