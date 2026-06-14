@@ -39,7 +39,6 @@ Imagina que puedes **preguntarle a un asistente de IA** cosas como:
 | Locales reubicados entre vueltas | "qué locales se reasignaron en Trujillo" |
 | Votos de un candidato | "cuántos votos sacó Rafael López Aliaga a nivel nacional en 2026" |
 | Resultados peruanos en el exterior | "quién ganó entre los peruanos en Suecia en 2026" |
-| Legislativo (modo local-only) | "quién fue el diputado más votado en Lima" *(retorna no disponible local)* |
 | Contexto electoral y verificación | "¿qué es el STAE?, ¿puede manipular votos?" |
 | Análisis profundo 900K | Ver [`docs/analisis-mesas-900k.md`](docs/analisis-mesas-900k.md) |
 
@@ -436,17 +435,6 @@ Top 5 en Puno (4,520 mesas · 946,628 votos emitidos)
 "top 5 candidatos en Argentina 2026"
 "cuántos votos hubo en las mesas de Estados Unidos"
 ```
-
-### 🏛️ Legislativo (local-only)
-
-```
-"quién fue el diputado más votado en Lima 2026"
-"top 10 senadores más votados para Cusco"
-"quién ganó los senadores en Arequipa"
-"cuántos votos sacó el primer diputado en Piura"
-```
-
-> En modo local-only, estas consultas responden explícitamente que el dataset legislativo no está disponible en la base local.
 
 ### 🔍 Segmentos de mesas (2026)
 
