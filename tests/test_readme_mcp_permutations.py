@@ -70,3 +70,30 @@ def test_multi_input_paises_loop() -> None:
         assert r.get("ok") is True, pais
         rows = (r.get("data") or {}).get("resultados") or []
         assert isinstance(rows, list), pais
+
+
+def test_cusco_sv_geo_matches_cross_year_2026_v2() -> None:
+    _skip_if_not_hydrated()
+    r_geo = srv.onpe_sv_resultados_geo(nivel="departamento", nombre="CUSCO", top_n=10)
+    r_cross = srv.onpe_comparacion_geo_cross_year(
+        geo_name="CUSCO",
+        nivel="departamento",
+        anio_a=2021,
+        anio_b=2026,
+        vuelta_a=2,
+        vuelta_b=2,
+        top_n=10,
+    )
+    assert r_geo.get("ok") is True
+    assert r_cross.get("ok") is True
+
+    geo_rows = (r_geo.get("data") or {}).get("resultados") or []
+    cross_b = ((r_cross.get("data") or {}).get("lado_b") or {})
+    cross_rows = cross_b.get("top") or []
+
+    geo_by_pid = {str(x.get("partido_id")): int(x.get("votos_validos") or 0) for x in geo_rows}
+    cross_by_pid = {str(x.get("partido_id")): int(x.get("votos") or 0) for x in cross_rows}
+
+    assert cross_by_pid.get("8") == geo_by_pid.get("8")
+    assert cross_by_pid.get("10") == geo_by_pid.get("10")
+    assert int(cross_b.get("total_validos") or 0) == sum(int(x.get("votos_validos") or 0) for x in geo_rows)

@@ -302,6 +302,51 @@ def test_comparacion_geo_cross_year_distrito(store: DataStore) -> None:
     assert by_a.get("Keiko Fujimori Higuchi", 0) > by_a.get("Pedro Castillo Terrones", 0)
 
 
+def test_comparacion_geo_cross_year_2026_sv_uses_sv_geo_membership(store: DataStore) -> None:
+    """2026 2V debe usar la geografía SV (ubicaciones_sv), no solo ubigeo_reniec."""
+    now = store.now_iso()
+    with store._connect() as conn:
+        # Ubigeo SV extra en Amazonas que NO existe en ubigeo_reniec del fixture.
+        conn.execute(
+            """INSERT INTO ubicaciones_sv (ubigeo, ambito, departamento, provincia,
+               distrito, continente, pais, ciudad, fetched_at)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            ("010699", "NACIONAL", "Amazonas", "Condorcanqui", "Nuevo Distrito", "", "", "", now),
+        )
+        conn.execute(
+            """INSERT INTO mesas_sv (codigo_mesa, id_ubigeo, nombre_local, id_ambito,
+               electores_habiles, votos_emitidos, votos_validos, total_asistentes,
+               codigo_estado_acta, fetched_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            ("900199", "010699", "Local Extra", 1, 200, 160, 150, 160, "C", now),
+        )
+        conn.executemany(
+            "INSERT INTO votos_sv (codigo_mesa, partido_id, votos, fetched_at) VALUES (?,?,?,?)",
+            [
+                ("900199", "10", 120, now),
+                ("900199", "8", 30, now),
+                ("900199", "80", 0, now),
+                ("900199", "81", 0, now),
+                ("900199", "82", 0, now),
+            ],
+        )
+
+    out = store.comparacion_geo_cross_year(
+        nivel="departamento", geo_name="AMAZONAS",
+        año_a=2021, año_b=2026, vuelta_a=2, vuelta_b=2,
+        top_n=5,
+    )
+    b = out["lado_b"]
+    by_b = {r["partido_id"]: r["votos"] for r in b["top"]}
+    # Base fixture Amazonas 2V: partido 10=190, partido 8=4 (mesa 900100)
+    # + mesa extra 900199: partido 10=120, partido 8=30.
+    assert by_b["10"] == 310
+    assert by_b["8"] == 34
+    # total_validos en 2V se calcula como suma de votos por partido (incluye especiales)
+    assert b["total_validos"] == 344
+    assert b["mesas"] == 2
+
+
 def test_comparacion_geo_cross_year_year_unavailable(store: DataStore) -> None:
     out = store.comparacion_geo_cross_year(
         nivel="distrito", geo_name="Miraflores",

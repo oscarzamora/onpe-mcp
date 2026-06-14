@@ -4688,19 +4688,19 @@ class DataStore:
                     ],
                 }
             # 2026
-            ubigeos = self._geo_filter_ubigeo_list(
-                departamento=geo_name if nivel_n == "departamento" else None,
-                provincia=geo_name if nivel_n == "provincia" else None,
-                distrito=geo_name if nivel_n == "distrito" else None,
-            )
-            if not ubigeos:
-                return {
-                    "año": año, "vuelta": vuelta, "available": True,
-                    "warning": f"No se encontró '{geo_name}' como {nivel_n} en 2026.",
-                    "top": [],
-                }
-            placeholders = ",".join("?" for _ in ubigeos)
             if vuelta == 1:
+                ubigeos = self._geo_filter_ubigeo_list(
+                    departamento=geo_name if nivel_n == "departamento" else None,
+                    provincia=geo_name if nivel_n == "provincia" else None,
+                    distrito=geo_name if nivel_n == "distrito" else None,
+                )
+                if not ubigeos:
+                    return {
+                        "año": año, "vuelta": vuelta, "available": True,
+                        "warning": f"No se encontró '{geo_name}' como {nivel_n} en 2026.",
+                        "top": [],
+                    }
+                placeholders = ",".join("?" for _ in ubigeos)
                 sql = f"""
                     SELECT v.partido_id, COALESCE(a.nombre,'') AS nombre,
                            SUM(v.votos) AS total
@@ -4713,28 +4713,76 @@ class DataStore:
                     ORDER BY total DESC
                     LIMIT ?
                 """
-            else:
-                sql = f"""
-                    SELECT v.partido_id, COALESCE(a.nombre,'') AS nombre,
+                with self._connect() as conn:
+                    rows = conn.execute(sql, list(ubigeos) + [top_n_eff]).fetchall()
+                    cov_sql = (
+                        "SELECT COUNT(*) AS c, SUM(votos_validos) AS val FROM mesas_data m "
+                        f"WHERE SUBSTR('00000' || m.ubigeo, -6) IN ({placeholders})"
+                    )
+                    cov_row = conn.execute(cov_sql, list(ubigeos)).fetchone()
+                mesas = int(cov_row["c"] or 0) if cov_row else 0
+                validos = int(cov_row["val"] or 0) if cov_row else 0
+                return {
+                    "año": año, "vuelta": vuelta, "available": True,
+                    "mesas": mesas, "total_validos": validos,
+                    "top": [
+                        {
+                            "partido_id": str(r["partido_id"] or ""),
+                            "candidato": str(r["nombre"] or ""),
+                            "votos": int(r["total"] or 0),
+                            "pct": (int(r["total"] or 0) / validos * 100.0)
+                                   if validos else 0.0,
+                        }
+                        for r in rows
+                    ],
+                }
+
+            # 2026 2V: usar la misma geografía SV (ubicaciones_sv) que query_sv_geo.
+            geo_col = "departamento" if nivel_n == "departamento" else ("provincia" if nivel_n == "provincia" else "distrito")
+            with self._connect() as conn:
+                geo_rows = conn.execute(
+                    f"SELECT DISTINCT ubigeo FROM ubicaciones_sv WHERE UPPER({geo_col}) = UPPER(?)",
+                    (geo_name,),
+                ).fetchall()
+            ubigeos_sv = {str(r["ubigeo"] or "") for r in geo_rows if str(r["ubigeo"] or "").strip()}
+            if not ubigeos_sv:
+                return {
+                    "año": año, "vuelta": vuelta, "available": True,
+                    "warning": f"No se encontró '{geo_name}' como {nivel_n} en 2026 2V.",
+                    "top": [],
+                }
+
+            placeholders_sv = ",".join("?" for _ in ubigeos_sv)
+            with self._connect() as conn:
+                rows = conn.execute(
+                    f"""
+                    SELECT v.partido_id,
+                           COALESCE(NULLIF(n.nombre_candidato,''), a.nombre, v.partido_id) AS nombre,
                            SUM(v.votos) AS total
                     FROM votos_sv v
                     JOIN mesas_sv m ON m.codigo_mesa = v.codigo_mesa
                     LEFT JOIN agrupaciones_sv a ON a.partido_id = v.partido_id
-                    WHERE m.id_ubigeo IN ({placeholders})
+                    LEFT JOIN sv_resumen_nacional n ON n.partido_id = v.partido_id
+                    WHERE m.id_ubigeo IN ({placeholders_sv})
                       AND v.partido_id NOT IN ('80','81','82')
-                    GROUP BY v.partido_id
+                    GROUP BY v.partido_id, COALESCE(NULLIF(n.nombre_candidato,''), a.nombre, v.partido_id)
                     ORDER BY total DESC
                     LIMIT ?
-                """
-            with self._connect() as conn:
-                rows = conn.execute(sql, list(ubigeos) + [top_n_eff]).fetchall()
-                cov_sql = (
-                    "SELECT COUNT(*) AS c, SUM(votos_validos) AS val FROM mesas_data m "
-                    f"WHERE SUBSTR('00000' || m.ubigeo, -6) IN ({placeholders})" if vuelta == 1 else
-                    "SELECT COUNT(*) AS c, SUM(votos_validos) AS val FROM mesas_sv "
-                    f"WHERE id_ubigeo IN ({placeholders})"
-                )
-                cov_row = conn.execute(cov_sql, list(ubigeos)).fetchone()
+                    """,
+                    list(ubigeos_sv) + [top_n_eff],
+                ).fetchall()
+                cov_row = conn.execute(
+                    f"""
+                    SELECT COUNT(DISTINCT m.codigo_mesa) AS c,
+                           SUM(v.votos) AS val
+                    FROM mesas_sv m
+                    JOIN votos_sv v ON v.codigo_mesa = m.codigo_mesa
+                    WHERE m.id_ubigeo IN ({placeholders_sv})
+                      AND v.partido_id NOT IN ('80','81','82')
+                    """,
+                    list(ubigeos_sv),
+                ).fetchone()
+
             mesas = int(cov_row["c"] or 0) if cov_row else 0
             validos = int(cov_row["val"] or 0) if cov_row else 0
             return {
