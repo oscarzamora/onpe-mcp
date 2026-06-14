@@ -3207,12 +3207,19 @@ class DataStore:
             try:
                 conn = self._connect_denorm()
                 rows = conn.execute("""
-                    SELECT partido_id, nombre_partido, candidato,
-                           votos, pct_votos_validos,
-                           total_mesas, mesas_contabilizadas,
-                           total_electores_habiles, total_votos_emitidos, total_votos_validos
-                    FROM fact_votos_nacional
-                    WHERE election_year=2026 AND vuelta=1 AND es_especial=0
+                    SELECT f.partido_id,
+                           f.nombre_partido,
+                           COALESCE(NULLIF(f.candidato, ''), a.candidato, '') AS candidato,
+                           f.votos,
+                           f.pct_votos_validos,
+                           f.total_mesas,
+                           f.mesas_contabilizadas,
+                           f.total_electores_habiles,
+                           f.total_votos_emitidos,
+                           f.total_votos_validos
+                    FROM fact_votos_nacional f
+                    LEFT JOIN agrupaciones a ON a.partido_id = f.partido_id
+                    WHERE f.election_year=2026 AND f.vuelta=1 AND f.es_especial=0
                     ORDER BY votos DESC
                 """).fetchall()
                 conn.close()
