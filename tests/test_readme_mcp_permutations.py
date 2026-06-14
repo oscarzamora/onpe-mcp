@@ -42,6 +42,17 @@ def test_multi_input_mesas_batch() -> None:
     assert isinstance(d.get("items"), list) and len(d["items"]) == 3
 
 
+def test_multi_input_mesas_chat_query() -> None:
+    _skip_if_not_hydrated()
+    q = "dame los resultados de las mesas 900100, 900101, 900102 en 2026"
+    r = srv.onpe_chat(q)
+    assert r.get("ok") is True
+    d = r.get("data") or {}
+    assert d.get("intent") == "mesa_batch"
+    result = d.get("result") or {}
+    assert result.get("total") == 3
+
+
 def test_multi_input_departamentos_loop() -> None:
     _skip_if_not_hydrated()
     for dep in ["LIMA", "AREQUIPA", "CUSCO"]:

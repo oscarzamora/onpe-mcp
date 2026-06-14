@@ -4095,6 +4095,81 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 10) -> dict[str,
         # Se verifica ANTES que geo cuando la query contiene la palabra "mesa"
         # explícita, para evitar que "qué pasó en la mesa 900100" sea capturado
         # por el detector de geo ("que" → lugar extranjero).
+        _mesa_codes_multi = []
+        for _m in re.findall(r"\b\d{6}\b", q_norm):
+            if _m not in _mesa_codes_multi:
+                _mesa_codes_multi.append(_m)
+        if len(_mesa_codes_multi) >= 2 and "mesa" in q_norm:
+            items: list[dict[str, Any]] = []
+            for _raw in _mesa_codes_multi:
+                _code = validate_mesa_code(_raw)
+                _payload = store.get_cached_mesa(_code, settings.cache_ttl_seconds)
+                _source = "sqlite_cache"
+                if _payload is None:
+                    _payload = store.get_mesa_from_local(_code)
+                    _source = "local_db"
+                if _payload is None:
+                    try:
+                        _payload = onpe_api.get_mesa(
+                            _code,
+                            id_eleccion=max(1, int(id_eleccion)),
+                            timeout=max(1, int(timeout)),
+                        )
+                        store.upsert_mesa_bundle(
+                            _code,
+                            _payload,
+                            source="onpe_live",
+                            id_eleccion=max(1, int(id_eleccion)),
+                        )
+                        _source = "onpe_live"
+                    except Exception:
+                        items.append({"codigo_mesa": _code, "ok": False, "source": "error"})
+                        continue
+
+                _mesa_data = _payload.get("mesa_data") or {}
+                _votos = _payload.get("votos") or []
+                _top = [
+                    v
+                    for v in _votos
+                    if v.get("votos", 0) > 0
+                    and "blanco" not in str(v.get("nombre_partido", "")).lower()
+                    and "nulo" not in str(v.get("nombre_partido", "")).lower()
+                ][:3]
+                _top_str = ", ".join(f"{v.get('nombre_partido','?')} {int(v.get('votos',0))}" for v in _top)
+                items.append(
+                    {
+                        "codigo_mesa": _code,
+                        "ok": True,
+                        "source": _source,
+                        "estado_acta": _mesa_data.get("estado_acta", ""),
+                        "electores_habiles": int(_mesa_data.get("electores_habiles", 0) or 0),
+                        "votos_emitidos": int(_mesa_data.get("votos_emitidos", 0) or 0),
+                        "top_str": _top_str,
+                        "result": _payload,
+                    }
+                )
+
+            _lines = []
+            for _it in items:
+                if _it.get("ok"):
+                    _lines.append(
+                        f"Mesa {_it['codigo_mesa']}: {_it.get('estado_acta','')}. "
+                        f"{_it.get('votos_emitidos',0)} emitidos de {_it.get('electores_habiles',0)}. "
+                        f"Top: {_it.get('top_str','N/D')}."
+                    )
+                else:
+                    _lines.append(f"Mesa {_it['codigo_mesa']}: sin datos (error).")
+            return ok_response(
+                {
+                    "intent": "mesa_batch",
+                    "answer": "\n".join(_lines),
+                    "result": {"total": len(items), "items": items},
+                    "source": "local_db" if all(i.get("source") in {"sqlite_cache", "local_db"} for i in items) else "mixed",
+                    "data_tier": "tier_1_local_cache",
+                },
+                started_ms=started_ms,
+            )
+
         if mesa_match and "mesa" in q_norm:
             code = validate_mesa_code(mesa_match.group(1))
 
@@ -5586,6 +5661,103 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 10) -> dict[str,
             return ok_response(data, started_ms=started_ms)
 
         _MESA_CONTEXT_WORDS = {"mesa", "acta", "local", "votacion", "sufragio", "urna", "codigo", "dame", "ver", "consulta", "busca", "info", "informacion", "detalle", "datos"}
+        mesa_codes_detected = []
+        for m in re.findall(r"\b\d{6}\b", q_norm):
+            if m not in mesa_codes_detected:
+                mesa_codes_detected.append(m)
+
+        if len(mesa_codes_detected) >= 2 and any(w in q_norm for w in _MESA_CONTEXT_WORDS):
+            items: list[dict[str, Any]] = []
+            for raw_code in mesa_codes_detected:
+                code = validate_mesa_code(raw_code)
+                payload = None
+                source = "not_found"
+
+                cached = store.get_cached_mesa(code, settings.cache_ttl_seconds)
+                if cached is not None:
+                    payload = cached
+                    source = "sqlite_cache"
+                else:
+                    local_bundle = store.get_mesa_from_local(code)
+                    if local_bundle is not None:
+                        payload = local_bundle
+                        source = "local_db"
+                    else:
+                        try:
+                            mesa = onpe_api.get_mesa(
+                                code,
+                                id_eleccion=max(1, int(id_eleccion)),
+                                timeout=max(1, int(timeout)),
+                            )
+                            store.upsert_mesa_bundle(
+                                code,
+                                mesa,
+                                source="onpe_live",
+                                id_eleccion=max(1, int(id_eleccion)),
+                            )
+                            payload = mesa
+                            source = "onpe_live"
+                        except Exception:
+                            payload = None
+                            source = "error"
+
+                if payload:
+                    mesa_data = payload.get("mesa_data") or {}
+                    votos = payload.get("votos") or []
+                    top3 = [
+                        v for v in votos
+                        if v.get("votos", 0) > 0
+                        and "blanco" not in str(v.get("nombre_partido", "")).lower()
+                        and "nulo" not in str(v.get("nombre_partido", "")).lower()
+                    ][:3]
+                    top3_str = ", ".join(
+                        f"{v.get('nombre_partido', '?')} {int(v.get('votos', 0))}"
+                        for v in top3
+                    )
+                    items.append(
+                        {
+                            "codigo_mesa": code,
+                            "ok": True,
+                            "source": source,
+                            "estado_acta": mesa_data.get("estado_acta", ""),
+                            "electores_habiles": int(mesa_data.get("electores_habiles", 0) or 0),
+                            "votos_emitidos": int(mesa_data.get("votos_emitidos", 0) or 0),
+                            "top": top3,
+                            "top_str": top3_str,
+                            "result": payload,
+                        }
+                    )
+                else:
+                    items.append(
+                        {
+                            "codigo_mesa": code,
+                            "ok": False,
+                            "source": source,
+                            "error": "No se pudo obtener información en este momento.",
+                        }
+                    )
+
+            lines = []
+            for it in items:
+                if it["ok"]:
+                    lines.append(
+                        f"Mesa {it['codigo_mesa']}: {it.get('estado_acta','')}. "
+                        f"{it.get('votos_emitidos',0)} emitidos de {it.get('electores_habiles',0)}. "
+                        f"Top: {it.get('top_str','N/D')}."
+                    )
+                else:
+                    lines.append(f"Mesa {it['codigo_mesa']}: sin datos ({it.get('source')}).")
+
+            data = {
+                "intent": "mesa_batch",
+                "answer": "\n".join(lines),
+                "result": {"total": len(items), "items": items},
+                "source": "local_db" if all(i.get("source") in {"sqlite_cache", "local_db"} for i in items) else "mixed",
+                "data_tier": "tier_1_local_cache",
+            }
+            store.append_raw_event("onpe_chat_mesa_batch", {"query": q, "codes": mesa_codes_detected})
+            return ok_response(data, started_ms=started_ms)
+
         if mesa_match and (any(w in q_norm for w in _MESA_CONTEXT_WORDS) or len(q_norm.split()) <= 2):
             # Fallback: número detectado sin keyword "mesa" explícita (e.g. "dame el 900100")
             # Requiere alguna palabra de contexto O query muy corta (solo el número)
