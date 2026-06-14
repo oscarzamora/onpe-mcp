@@ -612,6 +612,17 @@ def _coverage_verdict(coverage_pct: float) -> str:
     return "sin_datos"
 
 
+def _display_candidate_name(vote_row: dict[str, Any], candidate_map: dict[str, str]) -> str:
+    candidato = str(vote_row.get("candidato", "") or "").strip()
+    if candidato:
+        return candidato
+    pid = str(vote_row.get("partido_id", "") or "").strip()
+    mapped = str(candidate_map.get(pid, "") or "").strip()
+    if mapped:
+        return mapped
+    return str(vote_row.get("nombre_partido", "") or pid or "?")
+
+
 def _auto_hydrate_mesas(mesa_codes: list[str], id_eleccion: int, timeout: int) -> int:
     """Hidrata mesas faltantes desde ONPE API. Retorna cuántas se hidrataron exitosamente."""
     if _is_local_only():
@@ -3844,9 +3855,11 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 10) -> dict[str,
                     lines.append("")
 
                 if top_candidates:
+                    _prefix_cmap = store.load_candidate_map(settings.source_dir / "candidato.txt")
                     lines.append("### 🗳️ Top candidatos en este segmento\n")
                     for c in top_candidates:
-                        lines.append(f"{c['rank']}. **{c['nombre']}**: {c['votos']:,} votos ({c['n_mesas']:,} mesas)")
+                        _cname = _prefix_cmap.get(str(c.get("partido_id", "")), "") or c["nombre"]
+                        lines.append(f"{c['rank']}. **{_cname}**: {c['votos']:,} votos ({c['n_mesas']:,} mesas)")
                     lines.append("")
 
                 if context_notes:
@@ -3902,8 +3915,9 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 10) -> dict[str,
                 store.append_raw_event("onpe_chat_range_claim_verify", {"query": q, "mesa_prefix": mesa_prefix})
                 return ok_response(data, started_ms=started_ms)
 
+            _rank_cmap = store.load_candidate_map(settings.source_dir / "candidato.txt")
             top5_str = "; ".join(
-                f"{r['nombre_partido']} en {r['mesas_primero']} mesas"
+                f"{_rank_cmap.get(str(r.get('partido_id', '')), '') or r['nombre_partido']} en {r['mesas_primero']} mesas"
                 for r in ranking[:5]
             )
 
@@ -4167,6 +4181,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 10) -> dict[str,
             if _m not in _mesa_codes_multi:
                 _mesa_codes_multi.append(_m)
         if len(_mesa_codes_multi) >= 2 and "mesa" in q_norm:
+            _cand_map_mesa = store.load_candidate_map(settings.source_dir / "candidato.txt")
             items: list[dict[str, Any]] = []
             for _raw in _mesa_codes_multi:
                 _code = validate_mesa_code(_raw)
@@ -4205,7 +4220,10 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 10) -> dict[str,
                     and "blanco" not in str(v.get("nombre_partido", "")).lower()
                     and "nulo" not in str(v.get("nombre_partido", "")).lower()
                 ][:3]
-                _top_str = ", ".join(f"{v.get('nombre_partido','?')} {int(v.get('votos',0))}" for v in _top)
+                _top_str = ", ".join(
+                    f"{_display_candidate_name(v, _cand_map_mesa)} {int(v.get('votos',0))}"
+                    for v in _top
+                )
                 items.append(
                     {
                         "codigo_mesa": _code,
@@ -4242,6 +4260,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 10) -> dict[str,
 
         if mesa_match and "mesa" in q_norm:
             code = validate_mesa_code(mesa_match.group(1))
+            _cand_map_mesa = store.load_candidate_map(settings.source_dir / "candidato.txt")
 
             # Tier 1a: API cache fresco (JSON completo, máx cache_ttl_seconds)
             cached = store.get_cached_mesa(code, settings.cache_ttl_seconds)
@@ -4252,7 +4271,10 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 10) -> dict[str,
                 top3 = [v for v in votos if v.get("votos", 0) > 0
                         and "blanco" not in str(v.get("nombre_partido","")).lower()
                         and "nulo" not in str(v.get("nombre_partido","")).lower()][:3]
-                top3_str = ", ".join(f"{v['nombre_partido']} {v['votos']}" for v in top3)
+                top3_str = ", ".join(
+                    f"{_display_candidate_name(v, _cand_map_mesa)} {v['votos']}"
+                    for v in top3
+                )
                 data = {
                     "intent": "mesa",
                     "answer": f"Mesa {code} ({mesa_data.get('local_votacion','')}, {estado}). Top candidatos: {top3_str}.",
@@ -4268,14 +4290,11 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 10) -> dict[str,
                 mesa_data = local_bundle.get("mesa_data") or {}
                 estado = mesa_data.get("estado_acta", "No disponible")
                 votos = local_bundle.get("votos") or []
-                cand_map = store.load_candidate_map(settings.source_dir / "candidato.txt")
-                for v in votos:
-                    v["candidato"] = cand_map.get(str(v.get("partido_id", "")), "")
                 top3 = [v for v in votos if v.get("votos", 0) > 0
                         and "blanco" not in str(v.get("nombre_partido","")).lower()
                         and "nulo" not in str(v.get("nombre_partido","")).lower()][:3]
                 top3_str = ", ".join(
-                    f"{v.get('candidato') or v['nombre_partido']} {v['votos']}"
+                    f"{_display_candidate_name(v, _cand_map_mesa)} {v['votos']}"
                     for v in top3
                 )
                 loc = mesa_data.get("local_votacion", "")
@@ -4321,7 +4340,8 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 10) -> dict[str,
                         total_tc = sum(int(c.get("total_votos", 0)) for c in top_candidates)
                         for i, c in enumerate(top_candidates[:5], 1):
                             pct_c = int(c.get("total_votos", 0)) / total_tc * 100 if total_tc else 0
-                            answer_block += f"{i}. {c.get('nombre_partido', c.get('partido_id', '?'))} — {int(c.get('total_votos', 0)):,} ({pct_c:.1f}%)\n"
+                            _cname = _cand_map_mesa.get(str(c.get("partido_id", "")), "") or c.get("nombre_partido", c.get("partido_id", "?"))
+                            answer_block += f"{i}. {_cname} — {int(c.get('total_votos', 0)):,} ({pct_c:.1f}%)\n"
                     if context_notes:
                         answer_block += f"\n> {context_notes}"
                     data = {
@@ -5343,12 +5363,24 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 10) -> dict[str,
             cache_key = _geo_query_cache_key(geo_field, geo_expr, top_n)
             cached_geo = store.get_geo_query_cache(cache_key, settings.geo_query_cache_ttl_seconds)
             if cached_geo is not None:
+                _cached_top = ((cached_geo.get("result") or {}).get("top_partidos") or [])
+                _cached_total = int(((cached_geo.get("result") or {}).get("total_votos") or 0))
+                _cached_answer = str(cached_geo.get("answer") or "")
+                if _cached_top and _cached_total > 0 and "Top " not in _cached_answer:
+                    _cand_map_cached = store.load_candidate_map(settings.source_dir / "candidato.txt")
+                    _lines = [f"{_cached_answer}\n\nTop {min(top_n, len(_cached_top))} candidatos:"]
+                    for i, t in enumerate(_cached_top[:top_n], 1):
+                        _name = _cand_map_cached.get(str(t.get("partido_id", "")), "") or t.get("nombre_partido", "?")
+                        _pct = int(t.get("total_votos", 0)) / _cached_total * 100 if _cached_total else 0
+                        _lines.append(f"{i}. {_name} — {int(t.get('total_votos', 0)):,} votos ({_pct:.1f}%)")
+                    cached_geo["answer"] = "\n".join(_lines)
                 cached_geo["source"] = "sqlite_query_cache"
                 cached_geo["answer"] += " (cache de consulta)"
                 return ok_response(cached_geo, started_ms=started_ms)
 
             aggregates = store.aggregate_votes_by_party(ubigeos)
             top = aggregates[:top_n]
+            _cand_map_foreign = store.load_candidate_map(settings.source_dir / "candidato.txt")
             mesas_count = store.count_mesas_by_ubigeos(ubigeos)
             total_votes = sum(int(item.get("total_votos", 0)) for item in aggregates)
             is_partial = mesas_count == 0 or total_votes == 0
@@ -5364,6 +5396,13 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 10) -> dict[str,
                     " Resultado parcial: no hay votos locales suficientes todavía para este ámbito. "
                     "Consulta mesas ONPE (onpe_get_mesa/onpe_get_mesas_batch) para hidratar cache y acelerar siguientes consultas."
                 )
+            elif top and total_votes > 0:
+                lines_top = [f"\n\nTop {min(top_n, len(top))} candidatos:"]
+                for i, t in enumerate(top[:top_n], 1):
+                    _name = _cand_map_foreign.get(str(t.get("partido_id", "")), "") or t.get("nombre_partido", "?")
+                    _pct = int(t.get("total_votos", 0)) / total_votes * 100 if total_votes else 0
+                    lines_top.append(f"{i}. {_name} — {int(t.get('total_votos', 0)):,} votos ({_pct:.1f}%)")
+                answer += "\n".join(lines_top)
             data = {
                 "intent": "geo",
                 "answer": answer,
@@ -5749,6 +5788,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 10) -> dict[str,
                 mesa_codes_detected.append(m)
 
         if len(mesa_codes_detected) >= 2 and any(w in q_norm for w in _MESA_CONTEXT_WORDS):
+            _cand_map_mesa2 = store.load_candidate_map(settings.source_dir / "candidato.txt")
             items: list[dict[str, Any]] = []
             for raw_code in mesa_codes_detected:
                 code = validate_mesa_code(raw_code)
@@ -5797,7 +5837,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 10) -> dict[str,
                         and "nulo" not in str(v.get("nombre_partido", "")).lower()
                     ][:3]
                     top3_str = ", ".join(
-                        f"{v.get('nombre_partido', '?')} {int(v.get('votos', 0))}"
+                        f"{_display_candidate_name(v, _cand_map_mesa2)} {int(v.get('votos', 0))}"
                         for v in top3
                     )
                     items.append(
@@ -5848,6 +5888,7 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 10) -> dict[str,
             # Fallback: número detectado sin keyword "mesa" explícita (e.g. "dame el 900100")
             # Requiere alguna palabra de contexto O query muy corta (solo el número)
             code = validate_mesa_code(mesa_match.group(1))
+            _cand_map_mesa2 = store.load_candidate_map(settings.source_dir / "candidato.txt")
 
             # Tier 1a: API cache fresco
             cached = store.get_cached_mesa(code, settings.cache_ttl_seconds)
@@ -5858,7 +5899,10 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 10) -> dict[str,
                 top3 = [v for v in votos if v.get("votos", 0) > 0
                         and "blanco" not in str(v.get("nombre_partido","")).lower()
                         and "nulo" not in str(v.get("nombre_partido","")).lower()][:3]
-                top3_str = ", ".join(f"{v['nombre_partido']} {v['votos']}" for v in top3)
+                top3_str = ", ".join(
+                    f"{_display_candidate_name(v, _cand_map_mesa2)} {v['votos']}"
+                    for v in top3
+                )
                 data = {
                     "intent": "mesa",
                     "answer": f"Mesa {code} ({mesa_data.get('local_votacion','')}, {estado}). Top candidatos: {top3_str}.",
@@ -5875,14 +5919,11 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 10) -> dict[str,
                 estado = mesa_data.get("estado_acta", "No disponible")
                 votos = local_bundle.get("votos") or []
                 # Cargar nombres de candidatos
-                cand_map = store.load_candidate_map(settings.source_dir / "candidato.txt")
-                for v in votos:
-                    v["candidato"] = cand_map.get(str(v.get("partido_id", "")), "")
                 top3 = [v for v in votos if v.get("votos", 0) > 0
                         and "blanco" not in str(v.get("nombre_partido","")).lower()
                         and "nulo" not in str(v.get("nombre_partido","")).lower()][:3]
                 top3_str = ", ".join(
-                    f"{v.get('candidato') or v['nombre_partido']} {v['votos']}"
+                    f"{_display_candidate_name(v, _cand_map_mesa2)} {v['votos']}"
                     for v in top3
                 )
                 loc = mesa_data.get("local_votacion", "")
@@ -5920,11 +5961,13 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 10) -> dict[str,
                         f"| Votos emitidos | {ve2:,} |\n"
                     )
                     if top_cands2:
+                        _prefix_cmap2 = store.load_candidate_map(settings.source_dir / "candidato.txt")
                         ans2 += "\n**Top candidatos:**\n"
                         _tc2 = sum(int(c.get("total_votos", 0)) for c in top_cands2)
                         for i2, c2 in enumerate(top_cands2[:5], 1):
                             pct_c2 = int(c2.get("total_votos", 0)) / _tc2 * 100 if _tc2 else 0
-                            ans2 += f"{i2}. {c2.get('nombre_partido', '?')} — {int(c2.get('total_votos', 0)):,} ({pct_c2:.1f}%)\n"
+                            _cname2 = _prefix_cmap2.get(str(c2.get("partido_id", "")), "") or c2.get("nombre_partido", "?")
+                            ans2 += f"{i2}. {_cname2} — {int(c2.get('total_votos', 0)):,} ({pct_c2:.1f}%)\n"
                     if context_notes2:
                         ans2 += f"\n> {context_notes2}"
                     data = {
