@@ -24,104 +24,478 @@ El contrato MCP no cambia: solo cambia el backend de persistencia.
 - **Core**: hechos y dimensiones normalizadas.
 - **Serving**: vistas/denorm para consultas MCP.
 
-## Esquema mínimo a crear
+## Modelo de datos real (extraído de `storage.py`)
 
-La idea es usar el mismo modelo lógico en todos los motores, aunque cambie la sintaxis exacta de tipos, índices o materialización.
+A continuación se listan **todas las tablas** con sus columnas reales, cardinalidades de referencia y claves. Esto es lo que se debe replicar en el motor destino. La sintaxis DDL aquí es SQLite-compatible; ver sección "Adaptaciones por motor" para diferencias.
 
-### Tablas base
+---
 
-```sql
--- Dimensiones
-dim_election(
-  election_key      INT / BIGINT / IDENTITY / SEQUENCE,
-  election_year     SMALLINT,
-  round_number      TINYINT,
-  election_name     VARCHAR(...),
-  is_active         BOOLEAN
-)
+### 🗳️ Primera vuelta 2026 (1V)
 
-dim_geo(
-  geo_key           INT / BIGINT / IDENTITY / SEQUENCE,
-  ubigeo            VARCHAR(6) UNIQUE,
-  geo_level         VARCHAR(...),   -- nacional, departamento, provincia, distrito, exterior, continente, país, ciudad
-  parent_ubigeo      VARCHAR(6) NULL,
-  name              VARCHAR(...)
-)
+**`mesas_data`** — 92,766 filas · 1 fila por mesa
 
-dim_party(
-  party_key         INT / BIGINT / IDENTITY / SEQUENCE,
-  election_key      INT,
-  party_id          VARCHAR(...),
-  party_name        VARCHAR(...),
-  candidate_name    VARCHAR(...),
-  UNIQUE (election_key, party_id)
-)
+| Columna | Tipo | PK | Descripción |
+|---|---|---|---|
+| `codigo_mesa` | TEXT | ✅ | Código de 6 dígitos, zero-padded (ej. `900100`) |
+| `ubigeo` | TEXT | | Ubigeo ONPE 6 dígitos (ej. `150101`) |
+| `local_votacion` | TEXT | | Nombre del local de votación |
+| `electores_habiles` | INTEGER | | Padrón electoral de la mesa |
+| `votos_emitidos` | INTEGER | | Total votos emitidos |
+| `votos_validos` | INTEGER | | Total votos válidos |
+| `blancos` | INTEGER | | Votos en blanco |
+| `nulos` | INTEGER | | Votos nulos |
+| `impugnados` | INTEGER | | Votos impugnados |
+| `estado_acta` | TEXT | | Estado: `C`=Contabilizada, `E`=En proceso, `P`=Pendiente |
+| `fetched_at` | TEXT | | ISO-8601 UTC del último upsert |
 
--- Hechos
-fact_mesa(
-  mesa_key          BIGINT / VARCHAR(...),
-  election_key      INT,
-  ubigeo            VARCHAR(6),
-  local_code        VARCHAR(...),
-  mesa_code         VARCHAR(...),
-  electores_habiles INT,
-  votos_emitidos    INT,
-  votos_validos     INT,
-  votos_blancos     INT,
-  votos_nulos       INT,
-  votos_impugnados  INT,
-  status_code       VARCHAR(...),
-  status_label      VARCHAR(...),
-  updated_at        TIMESTAMP
-)
+Índices: `idx_mesas_ubigeo (ubigeo)`, `idx_mesas_estado (estado_acta)`
 
-fact_vote(
-  mesa_key          BIGINT / VARCHAR(...),
-  election_key      INT,
-  party_key         INT,
-  votes             INT,
-  pct_validos       DECIMAL(...),
-  pct_emitidos      DECIMAL(...),
-  PRIMARY KEY (mesa_key, election_key, party_key)
-)
+---
 
--- Serving / agregados
-agg_geo_summary(
-  election_key      INT,
-  geo_key           INT,
-  party_key         INT,
-  votes             BIGINT,
-  pct_validos       DECIMAL(...),
-  total_validos     BIGINT,
-  total_mesas       BIGINT,
-  mesas_contabilizadas BIGINT,
-  updated_at        TIMESTAMP,
-  PRIMARY KEY (election_key, geo_key, party_key)
-)
+**`votos`** — ~3.8M filas · 1 fila por (mesa × partido)
 
--- Operación
-sync_meta(
-  meta_key          VARCHAR(...) PRIMARY KEY,
-  meta_value        VARCHAR(...),
-  updated_at        TIMESTAMP
-)
+| Columna | Tipo | PK | Descripción |
+|---|---|---|---|
+| `codigo_mesa` | TEXT | ✅ | FK → `mesas_data.codigo_mesa` |
+| `partido_id` | TEXT | ✅ | ID del partido (ej. `"1"`, `"38"`) |
+| `votos` | INTEGER | | Votos obtenidos |
+| `fetched_at` | TEXT | | ISO-8601 UTC |
 
-raw_events(
-  event_id          BIGINT / IDENTITY / SEQUENCE,
-  tool_name         VARCHAR(...),
-  payload_json      JSON / NVARCHAR(MAX),
-  created_at        TIMESTAMP
-)
-```
+Índice: `idx_votos_partido (partido_id)`
 
-### Tablas temporales / staging
-- `stg_mesas`
-- `stg_votes`
-- `stg_parties`
-- `stg_geo`
-- `stg_summary`
+---
 
-Estas tablas pueden borrarse o truncarse en cada carga. Sirven para validar antes de promover al core.
+**`agrupaciones`** — 38+ filas · catálogo de partidos 1V
+
+| Columna | Tipo | PK | Descripción |
+|---|---|---|---|
+| `partido_id` | TEXT | ✅ | ID numérico asignado por ONPE |
+| `nombre` | TEXT | | Nombre oficial del partido |
+| `candidato` | TEXT | | Nombre del candidato presidencial (hidratado desde `candidato.txt`) |
+| `fetched_at` | TEXT | | ISO-8601 UTC |
+
+---
+
+**`votos_by_ubigeo_partido`** — agregado incremental por ubigeo
+
+| Columna | Tipo | PK | Descripción |
+|---|---|---|---|
+| `ubigeo` | TEXT | ✅ | Ubigeo 6 dígitos |
+| `partido_id` | TEXT | ✅ | ID del partido |
+| `total_votos` | INTEGER | | Suma de votos en ese ubigeo |
+| `fetched_at` | TEXT | | ISO-8601 UTC |
+
+Índice: `idx_votos_ubigeo_partido (ubigeo, partido_id)`
+
+---
+
+**`mesa_prefix_totals`** — totales por prefijo numérico (para queries de segmento)
+
+| Columna | Tipo | PK | Descripción |
+|---|---|---|---|
+| `prefix` | TEXT | ✅ | Prefijo (ej. `"900"`, `"087"`) |
+| `n_mesas` | INTEGER | | Total mesas en el bloque |
+| `mesas_con_votos` | INTEGER | | Mesas con al menos 1 voto registrado |
+| `votos_emitidos` | INTEGER | | Suma votos emitidos del bloque |
+| `votos_validos` | INTEGER | | Suma votos válidos del bloque |
+| `rebuilt_at` | TEXT | | ISO-8601 UTC del último rebuild |
+
+---
+
+**`mesa_prefix_party_summary`** — top partidos por prefijo
+
+| Columna | Tipo | PK | Descripción |
+|---|---|---|---|
+| `prefix` | TEXT | ✅ | Prefijo del bloque |
+| `partido_id` | TEXT | ✅ | ID del partido |
+| `total_votos` | INTEGER | | Votos totales del partido en el bloque |
+| `n_mesas` | INTEGER | | Mesas donde ese partido tiene votos |
+
+Índice: `idx_prefix_party (prefix, total_votos DESC)`
+
+---
+
+**`mesa_winner`** — ganador por mesa (cache de resultado)
+
+| Columna | Tipo | PK | Descripción |
+|---|---|---|---|
+| `codigo_mesa` | TEXT | ✅ | FK → `mesas_data.codigo_mesa` |
+| `partido_id` | TEXT | | Partido ganador |
+| `max_votos` | INTEGER | | Votos del ganador |
+
+---
+
+### 🏛️ Catálogo geográfico (compartido 1V y 2V)
+
+**`ubigeo_reniec`** — 1,838 filas · ubigeos domésticos RENIEC
+
+| Columna | Tipo | PK |
+|---|---|---|
+| `ubigeo` | TEXT | ✅ |
+| `distrito` | TEXT | |
+| `provincia` | TEXT | |
+| `departamento` | TEXT | |
+| `distrito_norm` | TEXT | | Acento-normalizado para búsqueda |
+| `provincia_norm` | TEXT | |
+| `departamento_norm` | TEXT | |
+| `fetched_at` | TEXT | |
+
+Índices: `departamento_norm`, `provincia_norm`, `distrito_norm`
+
+---
+
+**`foreign_catalog`** — ubigeos extranjeros
+
+| Columna | Tipo | PK |
+|---|---|---|
+| `ubigeo` | TEXT | ✅ |
+| `continente` | TEXT | |
+| `pais` | TEXT | |
+| `ciudad` | TEXT | |
+| `fetched_at` | TEXT | |
+
+---
+
+**`ubigeo_location_cache`** — resolución rápida ubigeo→geo
+
+| Columna | Tipo | PK |
+|---|---|---|
+| `ubigeo` | TEXT | ✅ |
+| `ambito` | TEXT | |
+| `departamento` | TEXT | |
+| `ciudad` | TEXT | |
+| `pais` | TEXT | |
+| `fetched_at` | TEXT | |
+
+---
+
+### 🥈 Segunda vuelta 2026 (2V)
+
+**`mesas_sv`** — 92,766 filas · 1 fila por mesa
+
+| Columna | Tipo | PK | Descripción |
+|---|---|---|---|
+| `codigo_mesa` | TEXT | ✅ | Código de 6 dígitos |
+| `id_ubigeo` | TEXT | | Ubigeo 6 dígitos (universo SV, puede diferir de RENIEC) |
+| `nombre_local` | TEXT | | Nombre del local |
+| `id_ambito` | INTEGER | | `1`=Perú doméstico, `2`=Exterior |
+| `electores_habiles` | INTEGER | | Padrón SV |
+| `votos_emitidos` | INTEGER | | |
+| `votos_validos` | INTEGER | | |
+| `total_asistentes` | INTEGER | | |
+| `codigo_estado_acta` | TEXT | | `C`/`E`/`P` |
+| `fetched_at` | TEXT | | |
+
+Índices: `idx_mesas_sv_ubigeo (id_ubigeo)`, `idx_mesas_sv_estado (codigo_estado_acta)`
+
+---
+
+**`votos_sv`** — ~463,600 filas · 1 fila por (mesa × partido)
+
+| Columna | Tipo | PK | Descripción |
+|---|---|---|---|
+| `codigo_mesa` | TEXT | ✅ | FK → `mesas_sv.codigo_mesa` |
+| `partido_id` | TEXT | ✅ | `"8"`=Keiko, `"10"`=Sánchez, `"80"`=Blanco, `"81"`=Nulo, `"82"`=Impugnado |
+| `votos` | INTEGER | | |
+| `fetched_at` | TEXT | | |
+
+---
+
+**`agrupaciones_sv`** — 5 filas · catálogo 2V
+
+| Columna | Tipo | PK |
+|---|---|---|
+| `partido_id` | TEXT | ✅ |
+| `nombre` | TEXT | |
+| `fetched_at` | TEXT | |
+
+---
+
+**`ubicaciones_sv`** — 2,102 filas · catálogo geográfico SV
+
+| Columna | Tipo | PK | Descripción |
+|---|---|---|---|
+| `ubigeo` | TEXT | ✅ | |
+| `ambito` | TEXT | | `"peru"` / `"exterior"` |
+| `departamento` | TEXT | | |
+| `provincia` | TEXT | | |
+| `distrito` | TEXT | | |
+| `continente` | TEXT | | Solo exterior |
+| `pais` | TEXT | | Solo exterior |
+| `ciudad` | TEXT | | Solo exterior |
+| `fetched_at` | TEXT | | |
+
+---
+
+**`sv_resumen_nacional`** — 4 filas · totales oficiales ONPE (snapshot)
+
+| Columna | Tipo | PK | Descripción |
+|---|---|---|---|
+| `partido_id` | TEXT | ✅ | |
+| `nombre_candidato` | TEXT | | Nombre completo oficial ONPE |
+| `nombre_agrupacion` | TEXT | | |
+| `votos_validos` | INTEGER | | |
+| `pct_votos_validos` | REAL | | |
+| `pct_votos_emitidos` | REAL | | |
+| `actas_contabilizadas_pct` | REAL | | |
+| `contabilizadas` | INTEGER | | Actas Contabilizadas |
+| `total_actas` | INTEGER | | Total actas del proceso |
+| `participacion_ciudadana` | REAL | | |
+| `fecha_actualizacion` | TEXT | | ISO-8601 UTC del snapshot ONPE |
+| `fuente` | TEXT | | `"scraper"` / `"api"` |
+| `loaded_at` | TEXT | | ISO-8601 UTC del último refresh |
+
+---
+
+**`sv_resumen_departamentos`** — 150 filas · resultados por departamento (25 dptos × 4 candidatos + continentes exterior)
+
+| Columna | Tipo | PK |
+|---|---|---|
+| `ubigeo` | TEXT | ✅ |
+| `partido_id` | TEXT | ✅ |
+| `nombre_candidato` | TEXT | |
+| `nombre_agrupacion` | TEXT | |
+| `votos_validos` | INTEGER | |
+| `pct_votos_validos` | REAL | |
+| `pct_votos_emitidos` | REAL | |
+| `total_votos_validos_geo` | INTEGER | Total válidos del geo |
+| `total_votos_emitidos_geo` | INTEGER | |
+| `fuente` | TEXT | |
+| `loaded_at` | TEXT | |
+
+---
+
+**`sv_resumen_provincias`** — ~1,345 filas · por provincia peruana y por país exterior
+
+| Columna | Tipo | PK | Descripción |
+|---|---|---|---|
+| `ubigeo` | TEXT | ✅ | Ubigeo de provincia o país exterior (ej. `920100`=Argentina) |
+| `partido_id` | TEXT | ✅ | |
+| `nombre_candidato` | TEXT | | |
+| `nombre_agrupacion` | TEXT | | |
+| `nombre_geo` | TEXT | | Nombre de la provincia o país |
+| `votos_validos` | INTEGER | | |
+| `pct_votos_validos` | REAL | | |
+| `pct_votos_emitidos` | REAL | | |
+| `total_votos_validos_geo` | INTEGER | | |
+| `total_votos_emitidos_geo` | INTEGER | | |
+| `fuente` | TEXT | | |
+| `loaded_at` | TEXT | | |
+
+---
+
+**`sv_resumen_cobertura`** — 30 filas · cobertura de actas por departamento + continente
+
+| Columna | Tipo | PK |
+|---|---|---|
+| `ubigeo` | TEXT | ✅ |
+| `nombre_departamento` | TEXT | |
+| `actas_contabilizadas` | INTEGER | |
+| `pct_actas_contabilizadas` | REAL | |
+| `fuente` | TEXT | |
+| `loaded_at` | TEXT | |
+
+---
+
+**`sv_agg_distrito`** — agregados por distrito (CTAS, calculados localmente)
+
+| Columna | Tipo | PK |
+|---|---|---|
+| `ubigeo` | TEXT | ✅ |
+| `partido_id` | TEXT | ✅ |
+| `nombre_candidato` | TEXT | |
+| `votos` | INTEGER | |
+| `total_mesas` | INTEGER | |
+| `mesas_contabilizadas` | INTEGER | |
+| `rebuilt_at` | TEXT | |
+
+---
+
+**`sv_agg_ciudad`** — agregados por ciudad (CTAS, calculados localmente)
+
+| Columna | Tipo | PK |
+|---|---|---|
+| `ubigeo` | TEXT | ✅ |
+| `ciudad` | TEXT | ✅ |
+| `partido_id` | TEXT | ✅ |
+| `nombre_candidato` | TEXT | |
+| `votos` | INTEGER | |
+| `total_mesas` | INTEGER | |
+| `mesas_contabilizadas` | INTEGER | |
+| `rebuilt_at` | TEXT | |
+
+---
+
+**`proyeccion_sv_by_ubigeo`** — proyección de transferencia de votos 1V→2V por ubigeo
+
+| Columna | Tipo | PK |
+|---|---|---|
+| `ubigeo` | TEXT | ✅ |
+| `votos_1v_total` | INTEGER | |
+| `votos_proyectados_keiko` | INTEGER | |
+| `votos_proyectados_sanchez` | INTEGER | |
+| `votos_proyectados_bn` | INTEGER | Blanco/nulo esperado |
+| `votos_abstencion_estimada` | INTEGER | |
+| `rebuilt_at` | TEXT | |
+
+---
+
+**`voto_transfer_map`** — pesos NNLS partido 1V → candidatos 2V (estático, derivado de datos reales)
+
+| Columna | Tipo | PK | Descripción |
+|---|---|---|---|
+| `partido_nombre_norm` | TEXT | ✅ | Nombre del partido normalizado (sin tildes, minúsculas) |
+| `peso_keiko` | REAL | | Fracción → Keiko (calibrado NNLS con 86K mesas) |
+| `peso_sanchez` | REAL | | Fracción → Sánchez |
+| `peso_bn` | REAL | | Fracción → blanco/nulo |
+| `fuente` | TEXT | | `"nnls_calibrado"` / `"editorial"` |
+| `loaded_at` | TEXT | | |
+
+---
+
+**`locales_reasignados_sv`** — 44 filas · locales reubicados entre vueltas
+
+| Columna | Tipo | PK |
+|---|---|---|
+| `nro` | INTEGER | ✅ |
+| `odpe` | TEXT | |
+| `dpto` | TEXT | |
+| `provincia` | TEXT | |
+| `distrito` | TEXT | |
+| `ccpp` | TEXT | |
+| `nombre_local_original` | TEXT | |
+| `nombre_local_nuevo` | TEXT | |
+| `motivo` | TEXT | |
+| `mesas_afectadas` | INTEGER | |
+| `estado_parseo` | TEXT | |
+
+---
+
+**`sv_sync_meta`** — control de sincronización
+
+| Columna | Tipo | PK | Descripción |
+|---|---|---|---|
+| `key` | TEXT | ✅ | Ej. `"party_map_2021_fingerprint"` |
+| `value` | TEXT | | |
+| `updated_at` | TEXT | | |
+
+---
+
+### 📅 Dataset histórico 2021 (1V y 2V)
+
+**`mesas_2021`** — 172,976 filas (86,488 × 2 vueltas) · 1 fila por (vuelta, mesa)
+
+| Columna | Tipo | PK | Descripción |
+|---|---|---|---|
+| `vuelta` | INTEGER | ✅ | `1` = primera vuelta, `2` = segunda vuelta |
+| `codigo_mesa` | TEXT | ✅ | Código de 6 dígitos |
+| `ubigeo` | TEXT | | Ubigeo 6 dígitos |
+| `departamento` | TEXT | | |
+| `provincia` | TEXT | | |
+| `distrito` | TEXT | | |
+| `tipo_eleccion` | TEXT | | |
+| `descrip_estado_acta` | TEXT | | |
+| `tipo_observacion` | TEXT | | |
+| `n_cvas` | INTEGER | | Nro. candidaturas |
+| `n_elec_habil` | INTEGER | | Electores hábiles |
+| `votos_vb` | INTEGER | | Votos en blanco |
+| `votos_vn` | INTEGER | | Votos nulos |
+| `votos_vi` | INTEGER | | Votos impugnados |
+| `votos_emitidos` | INTEGER | | |
+| `votos_validos` | INTEGER | | |
+| `fetched_at` | TEXT | | |
+
+Índices: `(vuelta, departamento, provincia, distrito)`, `(vuelta, ubigeo)`
+
+---
+
+**`votos_2021`** — ~1.7M filas · 1 fila por (vuelta, mesa, partido)
+
+| Columna | Tipo | PK |
+|---|---|---|
+| `vuelta` | INTEGER | ✅ |
+| `codigo_mesa` | TEXT | ✅ |
+| `partido_id` | TEXT | ✅ |
+| `votos` | INTEGER | |
+| `fetched_at` | TEXT | |
+
+---
+
+**`partidos_2021`** — 20 filas (18 en 1V + 2 en 2V)
+
+| Columna | Tipo | PK | Descripción |
+|---|---|---|---|
+| `vuelta` | INTEGER | ✅ | `1` / `2` |
+| `partido_id` | TEXT | ✅ | Ej. `"PC"`, `"K"`, `"RL"` |
+| `nombre_partido` | TEXT | | |
+| `candidato` | TEXT | | Nombre completo del candidato presidencial |
+| `fetched_at` | TEXT | | |
+
+Partidos 1V 2021: 18 candidatos.  
+Partidos 2V 2021: `PC`=Pedro Castillo, `K`=Keiko Fujimori.
+
+---
+
+### 🧰 Tablas operativas (cache y auditoría)
+
+**`mesa_cache`** — cache de bundles completos de mesa (respuesta ONPE cruda)
+
+| Columna | Tipo | PK |
+|---|---|---|
+| `codigo_mesa` | TEXT | ✅ |
+| `payload_json` | TEXT | JSON completo |
+| `fetched_at` | TEXT | |
+| `source` | TEXT | `"local_db"` / `"api_live"` |
+| `id_eleccion` | INTEGER | |
+| `payload_hash` | TEXT | SHA-256 para detección de cambios |
+| `schema_version` | INTEGER | |
+
+---
+
+**`geo_query_cache`** — cache de resultados de queries geográficos
+
+| Columna | Tipo | PK |
+|---|---|---|
+| `query_key` | TEXT | ✅ |
+| `payload_json` | TEXT | |
+| `fetched_at` | TEXT | |
+
+---
+
+### Tablas temporales / staging (crear y truncar en cada carga)
+
+| Tabla staging | Fuente real |
+|---|---|
+| `stg_mesas_1v` | `mesas_data` |
+| `stg_votos_1v` | `votos` |
+| `stg_partidos_1v` | `agrupaciones` |
+| `stg_mesas_2v` | `mesas_sv` |
+| `stg_votos_2v` | `votos_sv` |
+| `stg_partidos_2v` | `agrupaciones_sv` |
+| `stg_ubicaciones_2v` | `ubicaciones_sv` |
+| `stg_resumen_nac` | `sv_resumen_nacional` |
+| `stg_resumen_dptos` | `sv_resumen_departamentos` |
+| `stg_resumen_provs` | `sv_resumen_provincias` |
+| `stg_cobertura` | `sv_resumen_cobertura` |
+| `stg_mesas_2021` | `mesas_2021` |
+| `stg_votos_2021` | `votos_2021` |
+| `stg_partidos_2021` | `partidos_2021` |
+| `stg_geo` | `ubigeo_reniec` + `foreign_catalog` |
+
+---
+
+## Adaptaciones por motor
+
+| Aspecto | SQLite | MySQL | SQL Server | Snowflake | Fabric Warehouse |
+|---|---|---|---|---|---|
+| `TEXT` | TEXT | VARCHAR(512) / TEXT | NVARCHAR(512) / NVARCHAR(MAX) | VARCHAR | VARCHAR |
+| `INTEGER` | INTEGER | INT / BIGINT | INT / BIGINT | NUMBER | INT |
+| `REAL` | REAL | DOUBLE | FLOAT / DECIMAL(18,6) | FLOAT | FLOAT |
+| Timestamps | TEXT (ISO-8601) | DATETIME | DATETIME2 | TIMESTAMP_NTZ | DATETIME2 |
+| JSON | TEXT | JSON | NVARCHAR(MAX) | VARIANT | NVARCHAR(MAX) |
+| Upsert | `INSERT OR REPLACE` / `ON CONFLICT DO UPDATE` | `INSERT ... ON DUPLICATE KEY UPDATE` | `MERGE` | `MERGE` | `MERGE` |
+| Bulk load | `executemany` batch | `LOAD DATA INFILE` | `BULK INSERT` / `bcp` | `COPY INTO` | `COPY INTO` / Pipeline |
+| Auto-increment | — | `AUTO_INCREMENT` | `IDENTITY(1,1)` | `AUTOINCREMENT` | `IDENTITY` |
 
 ### Interfaces
 - `IDataStore`
