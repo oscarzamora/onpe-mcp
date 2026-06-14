@@ -8,7 +8,7 @@ from onpe_mcp.storage import DataStore
 def test_storage_crea_artefactos(tmp_path: Path) -> None:
     store = DataStore(tmp_path)
 
-    assert (tmp_path / "onpe.db").exists()
+    assert (tmp_path / "onpe_denorm.db").exists()
     assert (tmp_path / "raw" / "events.jsonl").exists() is False
     assert (tmp_path / "reports").exists()
 

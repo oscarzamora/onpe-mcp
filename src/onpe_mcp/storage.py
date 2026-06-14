@@ -185,7 +185,10 @@ def _to_int_safe(value: Any) -> int:
 class DataStore:
     def __init__(self, data_dir: Path) -> None:
         self.data_dir = data_dir
-        self.db_path = data_dir / "onpe.db"
+        # Runtime DB única del MCP: denorm (offline-first).
+        # onpe.db queda sólo como artefacto de construcción para build_denorm.py.
+        self.db_path = data_dir / "onpe_denorm.db"
+        self.legacy_oltp_db_path = data_dir / "onpe.db"
         self.raw_dir = data_dir / "raw"
         self.reports_dir = data_dir / "reports"
         self.denorm_db_path = data_dir / "onpe_denorm.db"
@@ -195,11 +198,27 @@ class DataStore:
         self.raw_dir.mkdir(parents=True, exist_ok=True)
         self.reports_dir.mkdir(parents=True, exist_ok=True)
         self._init_schema()
+        self._migrate_legacy_oltp_if_needed()
 
     @property
     def denorm_available(self) -> bool:
         if self._denorm_ready is None:
-            self._denorm_ready = self.denorm_db_path.exists()
+            if not self.denorm_db_path.exists():
+                self._denorm_ready = False
+            else:
+                try:
+                    with sqlite3.connect(self.denorm_db_path) as conn:
+                        row = conn.execute(
+                            """
+                            SELECT COUNT(*) AS c
+                            FROM sqlite_master
+                            WHERE type='table'
+                              AND name IN ('fact_votos_nacional', 'fact_votos_mesa')
+                            """
+                        ).fetchone()
+                    self._denorm_ready = bool(row and int(row[0] or 0) == 2)
+                except Exception:
+                    self._denorm_ready = False
         return self._denorm_ready
 
     def _connect_denorm(self) -> sqlite3.Connection:
@@ -216,7 +235,7 @@ class DataStore:
         try:
             nivel_norm = nivel.lower().strip() if nivel else "nacional"
 
-            if nivel_norm in ("nacional", "pais"):
+            if nivel_norm == "nacional":
                 rows = conn.execute("""
                     SELECT partido_id, nombre_partido AS nombre_agrupacion,
                            candidato AS nombre_candidato,
@@ -239,6 +258,45 @@ class DataStore:
                         "ubigeo": "000000",
                     })
                 return result
+            elif nivel_norm in ("pais_exterior", "pais"):
+                where_country = ""
+                params_country: list[Any] = []
+                if nombre:
+                    where_country = "AND UPPER(pais) = UPPER(?)"
+                    params_country.append(nombre)
+                rows = conn.execute(
+                    f"""
+                    SELECT pais AS nombre_geo, partido_id,
+                           nombre_partido AS nombre_agrupacion,
+                           candidato AS nombre_candidato,
+                           votos AS votos_validos,
+                           ROUND(CASE WHEN total_votos_validos > 0
+                                      THEN (100.0 * votos / total_votos_validos)
+                                      ELSE 0 END, 4) AS pct_votos_validos
+                    FROM fact_votos_pais
+                    WHERE election_year=2026 AND vuelta=2 AND es_especial=0 {where_country}
+                    ORDER BY votos DESC
+                    LIMIT ?
+                    """,
+                    params_country + [top_n],
+                ).fetchall()
+                return [dict(r) for r in rows]
+            elif nivel_norm == "continente":
+                rows = conn.execute(
+                    """
+                    SELECT continente AS nombre_geo, partido_id,
+                           nombre_partido AS nombre_agrupacion,
+                           candidato AS nombre_candidato,
+                           SUM(votos) AS votos_validos
+                    FROM fact_votos_pais
+                    WHERE election_year=2026 AND vuelta=2 AND es_especial=0
+                    GROUP BY continente, partido_id, nombre_partido, candidato
+                    ORDER BY votos_validos DESC
+                    LIMIT ?
+                    """,
+                    (top_n,),
+                ).fetchall()
+                return [dict(r) for r in rows]
 
             elif nivel_norm in ("departamento", "region", "dpto"):
                 filter_clause = ""
@@ -247,13 +305,16 @@ class DataStore:
                     filter_clause = "AND SUBSTR('000000'||cod_departamento,-2) = SUBSTR(?,1,2)"
                     params = [ubigeo[:2].zfill(2)] + [top_n]
                 elif nombre:
-                    filter_clause = "AND UPPER(nombre_departamento) = UPPER(?)"
+                    filter_clause = "AND UPPER(departamento) = UPPER(?)"
                     params = [nombre] + [top_n]
                 rows = conn.execute(f"""
-                    SELECT cod_departamento, nombre_departamento,
+                    SELECT cod_departamento, departamento AS nombre_departamento,
                            partido_id, nombre_partido AS nombre_agrupacion,
                            candidato AS nombre_candidato,
-                           votos, pct_votos_validos
+                           votos,
+                           ROUND(CASE WHEN total_votos_validos > 0
+                                      THEN (100.0 * votos / total_votos_validos)
+                                      ELSE 0 END, 4) AS pct_votos_validos
                     FROM fact_votos_departamento
                     WHERE election_year=2026 AND vuelta=2 AND es_especial=0 {filter_clause}
                     ORDER BY votos DESC
@@ -280,13 +341,16 @@ class DataStore:
                     filter_clause = "AND SUBSTR('000000'||cod_provincia,-4) = SUBSTR(?,1,4)"
                     params2 = [ubigeo[:4].zfill(4)] + [top_n]
                 elif nombre:
-                    filter_clause = "AND UPPER(nombre_provincia) = UPPER(?)"
+                    filter_clause = "AND UPPER(provincia) = UPPER(?)"
                     params2 = [nombre] + [top_n]
                 rows2 = conn.execute(f"""
-                    SELECT cod_provincia, nombre_provincia,
+                    SELECT cod_provincia, provincia AS nombre_provincia,
                            partido_id, nombre_partido AS nombre_agrupacion,
                            candidato AS nombre_candidato,
-                           votos, pct_votos_validos
+                           votos,
+                           ROUND(CASE WHEN total_votos_validos > 0
+                                      THEN (100.0 * votos / total_votos_validos)
+                                      ELSE 0 END, 4) AS pct_votos_validos
                     FROM fact_votos_provincia
                     WHERE election_year=2026 AND vuelta=2 AND es_especial=0 {filter_clause}
                     ORDER BY votos DESC
@@ -299,6 +363,7 @@ class DataStore:
                         "partido_id": r["partido_id"],
                         "nombre_agrupacion": r["nombre_agrupacion"],
                         "nombre_candidato": r["nombre_candidato"],
+                        "nombre_geo": r["nombre_provincia"],
                         "votos_validos": r["votos"],
                         "pct_votos_validos": r["pct_votos_validos"],
                         "ubigeo": ub,
@@ -315,10 +380,13 @@ class DataStore:
                     filter_clause2 = "AND SUBSTR('000000'||ubigeo,-6) = SUBSTR('000000'||?,-6)"
                     params3 = [ubigeo] + [top_n]
                 rows3 = conn.execute(f"""
-                    SELECT ubigeo, nombre_distrito,
+                    SELECT ubigeo, distrito AS nombre_distrito,
                            partido_id, nombre_partido AS nombre_agrupacion,
                            candidato AS nombre_candidato,
-                           votos, pct_votos_validos
+                           votos,
+                           ROUND(CASE WHEN total_votos_validos > 0
+                                      THEN (100.0 * votos / total_votos_validos)
+                                      ELSE 0 END, 4) AS pct_votos_validos
                     FROM fact_votos_ubigeo
                     WHERE election_year=2026 AND vuelta=2 AND es_especial=0 {filter_clause2}
                     ORDER BY votos DESC
@@ -362,8 +430,11 @@ class DataStore:
                             return "".join(c for c in _ud.normalize("NFKD", t) if not _ud.combining(c)).casefold()
 
                         rows_all = conn.execute("""
-                            SELECT nombre_departamento, partido_id, nombre_partido, candidato,
-                                   votos, pct_votos_validos
+                            SELECT departamento AS nombre_departamento, partido_id, nombre_partido, candidato,
+                                   votos,
+                                   ROUND(CASE WHEN total_votos_validos > 0
+                                              THEN (100.0 * votos / total_votos_validos)
+                                              ELSE 0 END, 4) AS pct_votos_validos
                             FROM fact_votos_departamento
                             WHERE election_year=2026 AND vuelta=1 AND es_especial=0
                         """).fetchall()
@@ -371,7 +442,10 @@ class DataStore:
                     else:
                         rows = conn.execute("""
                             SELECT partido_id, nombre_partido, candidato,
-                                   votos, pct_votos_validos
+                                   votos,
+                                   ROUND(CASE WHEN total_votos_validos > 0
+                                              THEN (100.0 * votos / total_votos_validos)
+                                              ELSE 0 END, 4) AS pct_votos_validos
                             FROM fact_votos_departamento
                             WHERE election_year=2026 AND vuelta=1 AND es_especial=0
                             ORDER BY votos DESC LIMIT ?
@@ -401,6 +475,84 @@ class DataStore:
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA temp_store=MEMORY")
         return conn
+
+    def _migrate_legacy_oltp_if_needed(self) -> None:
+        """One-shot copy of legacy onpe.db runtime tables into onpe_denorm.db.
+
+        This keeps MCP runtime denorm-only while preserving existing tool behavior
+        for tables that are hydrated from scrapers.
+        """
+        if self.legacy_oltp_db_path == self.db_path:
+            return
+        if not self.legacy_oltp_db_path.exists():
+            return
+
+        with self._connect() as conn:
+            # If already hydrated in denorm runtime tables, skip migration.
+            try:
+                row = conn.execute(
+                    """
+                    SELECT
+                      (SELECT COUNT(*) FROM mesas_data) AS c1,
+                      (SELECT COUNT(*) FROM votos) AS c2,
+                      (SELECT COUNT(*) FROM mesas_sv) AS c3,
+                      (SELECT COUNT(*) FROM votos_sv) AS c4,
+                      (SELECT COUNT(*) FROM mesas_2021) AS c5,
+                      (SELECT COUNT(*) FROM votos_2021) AS c6
+                    """
+                ).fetchone()
+                if row and all(int(row[k] or 0) > 0 for k in ("c1", "c2", "c3", "c4", "c5", "c6")):
+                    return
+            except Exception:
+                return
+
+            conn.execute("ATTACH DATABASE ? AS legacy", (str(self.legacy_oltp_db_path),))
+            try:
+                tables = conn.execute(
+                    """
+                    SELECT name
+                    FROM legacy.sqlite_master
+                    WHERE type='table'
+                      AND name NOT LIKE 'sqlite_%'
+                    """
+                ).fetchall()
+
+                for trow in tables:
+                    table = str(trow["name"])
+                    if table in {
+                        "dim_eleccion",
+                        "dim_partido",
+                        "dim_geo",
+                        "fact_votos_mesa",
+                        "fact_votos_ubigeo",
+                        "fact_votos_provincia",
+                        "fact_votos_departamento",
+                        "fact_votos_nacional",
+                        "fact_votos_pais",
+                    }:
+                        continue
+
+                    src_cols = [r["name"] for r in conn.execute(f'PRAGMA legacy.table_info("{table}")').fetchall()]
+                    if not src_cols:
+                        continue
+
+                    conn.execute(f'CREATE TABLE IF NOT EXISTS "{table}" AS SELECT * FROM legacy."{table}" WHERE 0')
+                    dst_cols = [r["name"] for r in conn.execute(f'PRAGMA table_info("{table}")').fetchall()]
+                    common = [c for c in src_cols if c in dst_cols]
+                    if not common:
+                        continue
+
+                    quoted = ", ".join(f'"{c}"' for c in common)
+                    conn.execute(f'DELETE FROM "{table}"')
+                    conn.execute(
+                        f'INSERT INTO "{table}" ({quoted}) SELECT {quoted} FROM legacy."{table}"'
+                    )
+                conn.commit()
+            finally:
+                try:
+                    conn.execute("DETACH DATABASE legacy")
+                except sqlite3.OperationalError:
+                    pass
 
     def _init_schema(self) -> None:
         with self._connect() as conn:

@@ -55,7 +55,7 @@ Imagina que puedes **preguntarle a un asistente de IA** cosas como:
 
 ---
 
-Estrategia **cache-first** de 3 tiers: **SQLite local** (`<100 ms`) → **API ONPE live** (`~1-8 s`) → **compendio cualitativo verificable** de 535 hechos sobre el proceso electoral. Soporte completo para 1V, 2V y comparaciones entre vueltas.
+Estrategia **cache-first** de 3 tiers: **SQLite denorm local** (`<100 ms`) → **API ONPE live** (`~1-8 s`) → **compendio cualitativo verificable** de 535 hechos sobre el proceso electoral. Soporte completo para 1V, 2V y comparaciones entre vueltas.
 
 ---
 
@@ -77,12 +77,12 @@ git clone https://github.com/oscarzamora/peruvoto2021 ../peruvoto2021
 onpe-mcp
 ```
 
-> **Importante:** la base de datos (`data/onpe.db`, ~250 MB) y los archivos `raw/` **NO se distribuyen** en el repositorio. Se generan localmente en el primer arranque a partir de los scrapers oficiales y dataset 2021. Esto garantiza que cada deploy tenga datos auditables, trazables y verificables.
+> **Importante:** la base de datos (`data/onpe_denorm.db`) y los archivos `raw/` **NO se distribuyen** en el repositorio. Se generan localmente en el primer arranque a partir de los scrapers oficiales y dataset 2021. Esto garantiza que cada deploy tenga datos auditables, trazables y verificables.
 
 ### Verificación post-instalación
 
 ```bash
-pytest                                  # corre la suite (600+ tests, ~30s)
+pytest                                  # corre la suite (410+ tests, ~30s)
 onpe-mcp                                # arranca servidor MCP (modo stdio)
 ```
 
@@ -199,7 +199,7 @@ onpe_sv_refresh()                       # UPSERT idempotente en SQLite
 ```
 onpe-mcp/
 ├── data/
-│   ├── onpe.db          ← SQLite: mesas, votos, cache, índices pre-computados
+│   ├── onpe_denorm.db   ← SQLite denorm: facts/dims + tablas runtime MCP
 │   ├── raw/events.jsonl ← log append-only de cada tool call
 │   └── reports/         ← resúmenes markdown diarios
 ├── src/onpe_mcp/
@@ -215,8 +215,8 @@ onpe-mcp/
 
 | Tier | Fuente | Latencia |
 |------|--------|----------|
-| **1a** | `mesa_cache` SQLite (JSON API cacheado, TTL 15 min) | ~1 ms |
-| **1b** | `mesas_data` + `votos` SQLite (snapshot hidratado) | ~5 ms |
+| **0** | `onpe_denorm.db` — facts/dims y tablas runtime MCP | **<1 ms** |
+| **1** | Cache de query en SQLite local (`mesa_cache`, `query_cache`) | ~1-5 ms |
 | **2** | API ONPE live (`resultadoelectoral.onpe.gob.pe`) | ~1-8 s |
 | **3** | Compendio cualitativo (535 hechos verificados) | ~0 ms |
 
@@ -255,8 +255,8 @@ python scripts/build_denorm.py --validate-only # solo valida (7/7 checks)
 python scripts/benchmark_denorm.py            # corre 26 queries OLTP vs Denorm
 ```
 
-> El modelo se activa automáticamente cuando `data/onpe_denorm.db` existe.
-> Si no existe, `DataStore` usa los paths OLTP originales sin degradación.
+> El MCP opera sobre `data/onpe_denorm.db` como única base de datos runtime.
+> Tras rehidratación, todas las rutas 2026 responden desde denorm/local.
 
 ---
 
@@ -511,6 +511,7 @@ Análisis profundos publicados en este repositorio (datos oficiales + metodolog�
 | [`docs/onpe-2021-integration-plan.md`](docs/onpe-2021-integration-plan.md) | **Plan de integración 2021**: alcance por niveles (nacional/geo/mesa), preguntas NL posibles, actualización MCP, banco de queries históricas. |
 | [`docs/qa-plan-segunda-vuelta.md`](docs/qa-plan-segunda-vuelta.md) | Plan de QA enterprise: 30+ escenarios, criterios de aceptación, casos edge. |
 | [`docs/onpe-api-contract.md`](docs/onpe-api-contract.md) | Especificación técnica del contrato API ONPE consumido por el MCP. |
+| [`docs/mcp-test-matrix.md`](docs/mcp-test-matrix.md) | Matriz de pruebas MCP del README + permutaciones multi-input (mesas/geos/países). |
 
 ---
 
@@ -569,7 +570,7 @@ Copia `.env.example` a `.env` para ajustar valores:
 
 - **Cobertura temporal completa**: 2026 (1V+2V) + 2021 (1V+2V histórico) — comparativas de ciclos electorales.
 - **Trazabilidad completa**: cada tool call se registra en `data/raw/events.jsonl` (append-only).
-- **Tests automatizados**: 600+ tests, suite ejecutable en ~30 s. CI-ready (matriz Python 3.11/3.12).
+- **Tests automatizados**: 410+ tests, suite ejecutable en ~30 s. CI-ready (matriz Python 3.11/3.12).
 - **Aislamiento de origen**: cada tabla en SQLite tiene timestamp `fetched_at` y origen (`source`, `fuente`).
 - **Operaciones idempotentes**: todos los `bootstrap_*` y `refresh` usan UPSERT — re-ejecutar es seguro.
 - **Sin datos en el repo**: `data/`, `*.db`, `*.db-wal`, `*.db-shm` están en `.gitignore`. Todo se regenera desde scrapers oficiales + dataset 2021.
@@ -594,7 +595,7 @@ Copia `.env.example` a `.env` para ajustar valores:
 
 ```bash
 pip install -e ".[dev]"                 # instala con extras dev (pytest, ruff, etc.)
-pytest                                  # corre 600+ tests (2026 + 2021)
+pytest                                  # corre 410+ tests (2026 + 2021)
 pytest tests/test_storage_2021.py -v   # solo tests de storage 2021
 pytest tests/test_nl_100_year_cases.py -v  # tests de año/routing automático
 pytest tests/test_onpe_chat.py -v      # tests de routeo principal
