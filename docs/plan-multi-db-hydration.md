@@ -24,6 +24,105 @@ El contrato MCP no cambia: solo cambia el backend de persistencia.
 - **Core**: hechos y dimensiones normalizadas.
 - **Serving**: vistas/denorm para consultas MCP.
 
+## Esquema mínimo a crear
+
+La idea es usar el mismo modelo lógico en todos los motores, aunque cambie la sintaxis exacta de tipos, índices o materialización.
+
+### Tablas base
+
+```sql
+-- Dimensiones
+dim_election(
+  election_key      INT / BIGINT / IDENTITY / SEQUENCE,
+  election_year     SMALLINT,
+  round_number      TINYINT,
+  election_name     VARCHAR(...),
+  is_active         BOOLEAN
+)
+
+dim_geo(
+  geo_key           INT / BIGINT / IDENTITY / SEQUENCE,
+  ubigeo            VARCHAR(6) UNIQUE,
+  geo_level         VARCHAR(...),   -- nacional, departamento, provincia, distrito, exterior, continente, país, ciudad
+  parent_ubigeo      VARCHAR(6) NULL,
+  name              VARCHAR(...)
+)
+
+dim_party(
+  party_key         INT / BIGINT / IDENTITY / SEQUENCE,
+  election_key      INT,
+  party_id          VARCHAR(...),
+  party_name        VARCHAR(...),
+  candidate_name    VARCHAR(...),
+  UNIQUE (election_key, party_id)
+)
+
+-- Hechos
+fact_mesa(
+  mesa_key          BIGINT / VARCHAR(...),
+  election_key      INT,
+  ubigeo            VARCHAR(6),
+  local_code        VARCHAR(...),
+  mesa_code         VARCHAR(...),
+  electores_habiles INT,
+  votos_emitidos    INT,
+  votos_validos     INT,
+  votos_blancos     INT,
+  votos_nulos       INT,
+  votos_impugnados  INT,
+  status_code       VARCHAR(...),
+  status_label      VARCHAR(...),
+  updated_at        TIMESTAMP
+)
+
+fact_vote(
+  mesa_key          BIGINT / VARCHAR(...),
+  election_key      INT,
+  party_key         INT,
+  votes             INT,
+  pct_validos       DECIMAL(...),
+  pct_emitidos      DECIMAL(...),
+  PRIMARY KEY (mesa_key, election_key, party_key)
+)
+
+-- Serving / agregados
+agg_geo_summary(
+  election_key      INT,
+  geo_key           INT,
+  party_key         INT,
+  votes             BIGINT,
+  pct_validos       DECIMAL(...),
+  total_validos     BIGINT,
+  total_mesas       BIGINT,
+  mesas_contabilizadas BIGINT,
+  updated_at        TIMESTAMP,
+  PRIMARY KEY (election_key, geo_key, party_key)
+)
+
+-- Operación
+sync_meta(
+  meta_key          VARCHAR(...) PRIMARY KEY,
+  meta_value        VARCHAR(...),
+  updated_at        TIMESTAMP
+)
+
+raw_events(
+  event_id          BIGINT / IDENTITY / SEQUENCE,
+  tool_name         VARCHAR(...),
+  payload_json      JSON / NVARCHAR(MAX),
+  created_at        TIMESTAMP
+)
+```
+
+### Tablas temporales / staging
+- `stg_mesas`
+- `stg_votes`
+- `stg_parties`
+- `stg_geo`
+- `stg_summary`
+
+Estas tablas pueden borrarse o truncarse en cada carga. Sirven para validar antes de promover al core.
+
 ### Interfaces
 - `IDataStore`
   - `health()`
