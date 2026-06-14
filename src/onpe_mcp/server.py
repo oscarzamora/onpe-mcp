@@ -2461,7 +2461,7 @@ def onpe_lookup_ubigeo(geo_name: str) -> dict[str, Any]:
 
 @mcp.tool()
 def onpe_listar_mesas_por_geo(
-    año: int = 2026,
+    anio: int = 2026,
     vuelta: int = 1,
     departamento: str | None = None,
     provincia: str | None = None,
@@ -2483,11 +2483,11 @@ def onpe_listar_mesas_por_geo(
     started_ms = now_ms()
     try:
         result = store.listar_mesas_por_geo(
-            año=int(año), vuelta=int(vuelta),
+            año=int(anio), vuelta=int(vuelta),
             departamento=departamento, provincia=provincia, distrito=distrito,
             limit=int(limit), offset=int(offset),
         )
-        return ok_response(result, started_ms=started_ms, meta={"source": f"sqlite_{año}"})
+        return ok_response(result, started_ms=started_ms, meta={"source": f"sqlite_{anio}"})
     except Exception as exc:
         logger.exception("Error en onpe_listar_mesas_por_geo")
         return error_response(str(exc), started_ms=started_ms)
@@ -2495,7 +2495,7 @@ def onpe_listar_mesas_por_geo(
 
 @mcp.tool()
 def onpe_listar_locales_por_geo(
-    año: int = 2026,
+    anio: int = 2026,
     vuelta: int = 1,
     departamento: str | None = None,
     provincia: str | None = None,
@@ -2510,11 +2510,11 @@ def onpe_listar_locales_por_geo(
     started_ms = now_ms()
     try:
         result = store.listar_locales_por_geo(
-            año=int(año), vuelta=int(vuelta),
+            año=int(anio), vuelta=int(vuelta),
             departamento=departamento, provincia=provincia, distrito=distrito,
             limit=int(limit),
         )
-        return ok_response(result, started_ms=started_ms, meta={"source": f"sqlite_{año}"})
+        return ok_response(result, started_ms=started_ms, meta={"source": f"sqlite_{anio}"})
     except Exception as exc:
         logger.exception("Error en onpe_listar_locales_por_geo")
         return error_response(str(exc), started_ms=started_ms)
@@ -2523,7 +2523,7 @@ def onpe_listar_locales_por_geo(
 @mcp.tool()
 def onpe_mesa_geo_lookup(
     codigo_mesa: str,
-    año: int = 2026,
+    anio: int = 2026,
     vuelta: int = 1,
 ) -> dict[str, Any]:
     """Lookup ligero: dada una mesa, devuelve SOLO geo + estado (sin votos).
@@ -2533,8 +2533,8 @@ def onpe_mesa_geo_lookup(
     """
     started_ms = now_ms()
     try:
-        result = store.mesa_geo_lookup(str(codigo_mesa), año=int(año), vuelta=int(vuelta))
-        return ok_response(result, started_ms=started_ms, meta={"source": f"sqlite_{año}"})
+        result = store.mesa_geo_lookup(str(codigo_mesa), año=int(anio), vuelta=int(vuelta))
+        return ok_response(result, started_ms=started_ms, meta={"source": f"sqlite_{anio}"})
     except Exception as exc:
         logger.exception("Error en onpe_mesa_geo_lookup")
         return error_response(str(exc), started_ms=started_ms)
@@ -2555,8 +2555,8 @@ def onpe_2021_comparacion_mesa(codigo_mesa: str) -> dict[str, Any]:
 @mcp.tool()
 def onpe_comparacion_mesa_cross_year(
     codigo_mesa: str,
-    año_a: int,
-    año_b: int,
+    anio_a: int,
+    anio_b: int,
     vuelta_a: int = 1,
     vuelta_b: int = 1,
 ) -> dict[str, Any]:
@@ -2569,7 +2569,7 @@ def onpe_comparacion_mesa_cross_year(
     try:
         result = store.comparacion_mesa_cross_year(
             str(codigo_mesa),
-            año_a=int(año_a), año_b=int(año_b),
+            año_a=int(anio_a), año_b=int(anio_b),
             vuelta_a=int(vuelta_a), vuelta_b=int(vuelta_b),
         )
         return ok_response(result, started_ms=started_ms, meta={"source": "sqlite_cross_year"})
@@ -2582,8 +2582,8 @@ def onpe_comparacion_mesa_cross_year(
 def onpe_comparacion_geo_cross_year(
     geo_name: str,
     nivel: str = "departamento",
-    año_a: int = 2021,
-    año_b: int = 2026,
+    anio_a: int = 2021,
+    anio_b: int = 2026,
     vuelta_a: int = 2,
     vuelta_b: int = 2,
     top_n: int = 5,
@@ -2597,7 +2597,7 @@ def onpe_comparacion_geo_cross_year(
     try:
         result = store.comparacion_geo_cross_year(
             nivel=str(nivel), geo_name=str(geo_name),
-            año_a=int(año_a), año_b=int(año_b),
+            año_a=int(anio_a), año_b=int(anio_b),
             vuelta_a=int(vuelta_a), vuelta_b=int(vuelta_b),
             top_n=int(top_n),
         )
