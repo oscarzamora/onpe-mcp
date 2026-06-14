@@ -172,6 +172,8 @@ def test_export_partidos_2026_1v(store: DataStore) -> None:
     assert out["total"] == 4
     assert out["candidatos"] == 2  # 10 + 8
     by_pid = {r["partido_id"]: r for r in out["rows"]}
+    assert "candidato" in by_pid["10"]
+    assert by_pid["10"]["candidato"] == ""
     assert by_pid["10"]["is_candidate"] is True
     assert by_pid["80"]["is_candidate"] is False
 

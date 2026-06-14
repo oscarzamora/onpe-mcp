@@ -593,6 +593,7 @@ class DataStore:
                 CREATE TABLE IF NOT EXISTS agrupaciones (
                     partido_id TEXT PRIMARY KEY,
                     nombre TEXT,
+                    candidato TEXT NOT NULL DEFAULT '',
                     fetched_at TEXT NOT NULL
                 );
 
@@ -919,6 +920,12 @@ class DataStore:
                 );
                 """
             )
+            cols = {
+                str(r["name"])
+                for r in conn.execute("PRAGMA table_info(agrupaciones)").fetchall()
+            }
+            if "candidato" not in cols:
+                conn.execute("ALTER TABLE agrupaciones ADD COLUMN candidato TEXT NOT NULL DEFAULT ''")
 
     @staticmethod
     def _mesa_prefix_like(prefix: str) -> str:
@@ -1799,6 +1806,7 @@ class DataStore:
     ) -> dict[str, int | bool]:
         if source_dir is None:
             source_dir = output_dir.parent / "source_data"
+        candidate_map = self.load_candidate_map(source_dir / "candidato.txt")
 
         with self._connect() as conn:
             mesas_existing = int(
@@ -1809,6 +1817,11 @@ class DataStore:
             )
 
             if not force and (mesas_existing > 0 or (include_votes and votos_existing > 0)):
+                if candidate_map:
+                    conn.executemany(
+                        "UPDATE agrupaciones SET candidato = ? WHERE partido_id = ?",
+                        [(str(cand or ""), str(pid)) for pid, cand in candidate_map.items()],
+                    )
                 reniec_inserted = self.try_bootstrap_reniec(source_dir)
                 return {
                     "skipped": True,
@@ -1878,13 +1891,19 @@ class DataStore:
                             continue
                         conn.execute(
                             """
-                            INSERT INTO agrupaciones (partido_id, nombre, fetched_at)
-                            VALUES (?, ?, ?)
+                            INSERT INTO agrupaciones (partido_id, nombre, candidato, fetched_at)
+                            VALUES (?, ?, ?, ?)
                             ON CONFLICT(partido_id) DO UPDATE SET
                                 nombre=excluded.nombre,
+                                candidato=excluded.candidato,
                                 fetched_at=excluded.fetched_at
                             """,
-                            (partido_id, str(row.get("nombre", "")).strip(), now),
+                            (
+                                partido_id,
+                                str(row.get("nombre", "")).strip(),
+                                str(candidate_map.get(partido_id, "") or ""),
+                                now,
+                            ),
                         )
                         agrupaciones_inserted += 1
 
@@ -3162,13 +3181,14 @@ class DataStore:
         """Catalog of partidos for 2026 1V (`agrupaciones`)."""
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT partido_id, COALESCE(nombre,'') AS nombre "
+                "SELECT partido_id, COALESCE(nombre,'') AS nombre, COALESCE(candidato,'') AS candidato "
                 "FROM agrupaciones ORDER BY CAST(partido_id AS INTEGER)"
             ).fetchall()
         out_rows = [
             {
                 "partido_id": str(r["partido_id"] or ""),
                 "nombre_partido": str(r["nombre"] or ""),
+                "candidato": str(r["candidato"] or ""),
                 "is_candidate": str(r["partido_id"]) not in {"80", "81", "82"},
             }
             for r in rows
@@ -3177,7 +3197,7 @@ class DataStore:
             "vuelta": 1,
             "total": len(out_rows),
             "candidatos": sum(1 for r in out_rows if r["is_candidate"]),
-            "schema": ["partido_id", "nombre_partido", "is_candidate"],
+            "schema": ["partido_id", "nombre_partido", "candidato", "is_candidate"],
             "rows": out_rows,
         }
 

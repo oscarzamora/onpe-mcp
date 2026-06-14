@@ -16,6 +16,36 @@ def test_storage_crea_artefactos(tmp_path: Path) -> None:
     assert (tmp_path / "raw" / "events.jsonl").exists()
 
 
+def test_bootstrap_from_onpescraper_hydrates_candidate_names(tmp_path: Path) -> None:
+    store = DataStore(tmp_path)
+    output_dir = tmp_path / "output"
+    source_dir = tmp_path / "source_data"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    source_dir.mkdir(parents=True, exist_ok=True)
+
+    (output_dir / "agrupaciones.txt").write_text(
+        "partido_id\tnombre\n10\tJUNTOS POR EL PERU\n8\tFUERZA POPULAR\n",
+        encoding="utf-8",
+    )
+    (source_dir / "candidato.txt").write_text(
+        "partido_id\tCandidato\n10\tROBERTO SANCHEZ PALOMINO\n8\tKEIKO FUJIMORI HIGUCHI\n",
+        encoding="utf-8",
+    )
+
+    result = store.bootstrap_from_onpescraper(
+        output_dir=output_dir,
+        source_dir=source_dir,
+        include_votes=False,
+        force=True,
+    )
+    assert result["skipped"] is False
+
+    exported = store.export_partidos_2026_1v()
+    by_pid = {r["partido_id"]: r for r in exported["rows"]}
+    assert by_pid["10"]["candidato"] == "ROBERTO SANCHEZ PALOMINO"
+    assert by_pid["8"]["candidato"] == "KEIKO FUJIMORI HIGUCHI"
+
+
 def test_cache_roundtrip(tmp_path: Path) -> None:
     store = DataStore(tmp_path)
 

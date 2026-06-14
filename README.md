@@ -305,7 +305,7 @@ python scripts/benchmark_denorm.py            # corre 26 queries OLTP vs Denorm
 |------|-------------|
 | `onpe_export_mesas` | Cabecera por mesa 2026 1V (geo + electores + emit/válidos/blancos/nulos + estado_acta). Filtros: dpto/prov/distrito/ubigeo_prefix/mesa_prefix/estado_acta. |
 | `onpe_export_votos` | 1 fila por (mesa × partido) 2026 1V con geo enriquecido. Filtro `partido_ids`. |
-| `onpe_export_partidos` | Catálogo 2026 1V (38 partidos + blanco/nulo/impugnado con flag `is_candidate`). |
+| `onpe_export_partidos` | Catálogo 2026 1V (38 partidos + blanco/nulo/impugnado con `is_candidate` y `candidato` cuando existe en `source_data/candidato.txt`). |
 | `onpe_summary` | Resumen agregado nacional 2026 1V (totales + por partido + %). |
 | `onpe_resultados_geo` | Top N candidatos por nivel geo (nacional/dpto/prov/distrito). Análogo a `onpe_sv_resultados_geo`. |
 | `onpe_cobertura` | Cobertura 2026 1V por departamento. Análogo a `onpe_sv_cobertura`. |

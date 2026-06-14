@@ -2215,7 +2215,8 @@ def onpe_export_votos(
 
 @mcp.tool()
 def onpe_export_partidos() -> dict[str, Any]:
-    """Catálogo de partidos 2026 1V. Cada fila incluye is_candidate=false
+    """Catálogo de partidos 2026 1V. Cada fila incluye `candidato`
+    (cuando existe en `source_data/candidato.txt`) y `is_candidate=false`
     para 80 (blanco), 81 (nulo), 82 (impugnado)."""
     started_ms = now_ms()
     try:
