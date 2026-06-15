@@ -18,7 +18,7 @@ import pytest
 
 DATA_DIR = Path(__file__).parent.parent / "data"
 DENORM_DB = DATA_DIR / "onpe_denorm.db"
-OLTP_DB = DATA_DIR / "onpe.db"
+OLTP_DB = DATA_DIR / "source_snapshot.db"
 
 
 @pytest.fixture(scope="module")
@@ -35,9 +35,9 @@ def denorm_conn():
 
 @pytest.fixture(scope="module")
 def oltp_conn():
-    """Read-only connection to onpe.db (OLTP source). Skip if not present."""
+    """Read-only connection to runtime DB baseline. Skip if not present."""
     if not OLTP_DB.exists():
-        pytest.skip("onpe.db not found — need hydrated DB")
+        pytest.skip("source_snapshot.db not found — baseline optional")
     uri = f"file:{OLTP_DB}?mode=ro"
     conn = sqlite3.connect(uri, uri=True)
     conn.row_factory = sqlite3.Row
@@ -267,7 +267,7 @@ def test_datastore_denorm_unavailable_on_empty_path():
 def test_summary_2026_1v_uses_denorm():
     """summary_2026_1v returns correct totals from denorm (or OLTP fallback)."""
     if not OLTP_DB.exists():
-        pytest.skip("onpe.db not found")
+        pytest.skip("onpe_denorm.db not found")
     from onpe_mcp.storage import DataStore
     ds = DataStore(data_dir=DATA_DIR)
     result = ds.summary_2026_1v()
@@ -283,7 +283,7 @@ def test_summary_2026_1v_uses_denorm():
 def test_summary_2026_sv_uses_denorm():
     """summary_2026_sv returns correct totals (denorm or OLTP fallback)."""
     if not OLTP_DB.exists():
-        pytest.skip("onpe.db not found")
+        pytest.skip("onpe_denorm.db not found")
     from onpe_mcp.storage import DataStore
     ds = DataStore(data_dir=DATA_DIR)
     result = ds.summary_2026_sv()
@@ -298,7 +298,7 @@ def test_summary_2026_sv_uses_denorm():
 def test_summary_2021_uses_denorm():
     """summary_2021 returns correct totals for both rounds."""
     if not OLTP_DB.exists():
-        pytest.skip("onpe.db not found")
+        pytest.skip("onpe_denorm.db not found")
     from onpe_mcp.storage import DataStore
     ds = DataStore(data_dir=DATA_DIR)
     for vuelta in (1, 2):
@@ -312,7 +312,7 @@ def test_summary_2021_uses_denorm():
 def test_query_sv_nacional_returns_shaped_rows():
     """query_sv_nacional returns rows with required keys."""
     if not OLTP_DB.exists():
-        pytest.skip("onpe.db not found")
+        pytest.skip("onpe_denorm.db not found")
     from onpe_mcp.storage import DataStore
     ds = DataStore(data_dir=DATA_DIR)
     rows = ds.query_sv_nacional()
@@ -325,7 +325,7 @@ def test_query_sv_nacional_returns_shaped_rows():
 def test_query_sv_geo_departamento():
     """query_sv_geo(nivel='departamento') returns rows with ubigeo field."""
     if not OLTP_DB.exists():
-        pytest.skip("onpe.db not found")
+        pytest.skip("onpe_denorm.db not found")
     from onpe_mcp.storage import DataStore
     ds = DataStore(data_dir=DATA_DIR)
     rows = ds.query_sv_geo(nivel="departamento")
@@ -338,7 +338,7 @@ def test_query_sv_geo_departamento():
 def test_query_sv_geo_pais_exterior():
     """query_sv_geo(nivel='pais_exterior', nombre='ARGENTINA') returns data."""
     if not OLTP_DB.exists():
-        pytest.skip("onpe.db not found")
+        pytest.skip("onpe_denorm.db not found")
     from onpe_mcp.storage import DataStore
     ds = DataStore(data_dir=DATA_DIR)
     rows = ds.query_sv_geo(nivel="pais_exterior", nombre="ARGENTINA")
@@ -348,7 +348,7 @@ def test_query_sv_geo_pais_exterior():
 def test_get_totales_nacionales_1v():
     """get_totales_nacionales_1v returns correct shape."""
     if not OLTP_DB.exists():
-        pytest.skip("onpe.db not found")
+        pytest.skip("onpe_denorm.db not found")
     from onpe_mcp.storage import DataStore
     ds = DataStore(data_dir=DATA_DIR)
     result = ds.get_totales_nacionales_1v()
@@ -362,7 +362,7 @@ def test_get_totales_nacionales_1v():
 def test_get_top_partidos_1v():
     """get_top_partidos_1v returns list with partido_id, nombre, votos."""
     if not OLTP_DB.exists():
-        pytest.skip("onpe.db not found")
+        pytest.skip("onpe_denorm.db not found")
     from onpe_mcp.storage import DataStore
     ds = DataStore(data_dir=DATA_DIR)
     rows = ds.get_top_partidos_1v(top_n=5)
@@ -375,7 +375,7 @@ def test_get_top_partidos_1v():
 def test_aggregate_votes_2021_nacional():
     """aggregate_votes_2021 national path returns top candidates."""
     if not OLTP_DB.exists():
-        pytest.skip("onpe.db not found")
+        pytest.skip("onpe_denorm.db not found")
     from onpe_mcp.storage import DataStore
     ds = DataStore(data_dir=DATA_DIR)
     result = ds.aggregate_votes_2021(vuelta=2)

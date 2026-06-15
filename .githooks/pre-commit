@@ -1,10 +1,10 @@
 #!/usr/bin/env sh
 
 # Bloquea commits que intenten incluir la base SQLite local.
-if git diff --cached --name-only --diff-filter=ACMR | grep -E '(^|/)data/onpe\.db($|-shm|-wal)' >/dev/null 2>&1; then
-  echo "ERROR: data/onpe.db (y archivos -shm/-wal) no deben subirse." >&2
+if git diff --cached --name-only --diff-filter=ACMR | grep -E '(^|/)data/onpe_denorm\.db($|-shm|-wal)' >/dev/null 2>&1; then
+  echo "ERROR: data/onpe_denorm.db (y archivos -shm/-wal) no deben subirse." >&2
   echo "La regla del proyecto es hidratar en primer arranque, no versionar DB local." >&2
-  echo "Solucion: git reset HEAD data/onpe.db data/onpe.db-shm data/onpe.db-wal" >&2
+  echo "Solucion: git reset HEAD data/onpe_denorm.db data/onpe_denorm.db-shm data/onpe_denorm.db-wal" >&2
   exit 1
 fi
 

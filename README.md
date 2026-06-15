@@ -237,11 +237,11 @@ Pre-materializa **todas las permutaciones** `election_year × vuelta × geo × p
 | `dim_eleccion` | proceso electoral | 4 |
 | `dim_partido` | partido × elección | 72 |
 
-**Benchmark vs OLTP (26 queries, mediana de 5 ejecuciones):**
+**Benchmark histórico vs baseline legacy (26 queries, mediana de 5 ejecuciones):**
 
 > **99.6% reducción de tiempo — speedup mediano 1,116×**
 
-| Categoría | OLTP | Denorm | Speedup |
+| Categoría | Baseline legacy | Denorm | Speedup |
 |-----------|-----:|-------:|--------:|
 | Nacionales / departamento / provincia | 250–10,000 ms | <1 ms | >999× |
 | Mesa range (1–500 mesas) | 388 ms | 36 ms | 10.7× |
@@ -252,7 +252,7 @@ Pre-materializa **todas las permutaciones** `election_year × vuelta × geo × p
 ```bash
 python scripts/build_denorm.py                # reconstruye (~108 s, ~1.9 GB)
 python scripts/build_denorm.py --validate-only # solo valida (7/7 checks)
-python scripts/benchmark_denorm.py            # corre 26 queries OLTP vs Denorm
+python scripts/benchmark_denorm.py            # corre 26 queries baseline legacy vs Denorm
 ```
 
 > El MCP opera sobre `data/onpe_denorm.db` como única base de datos runtime.

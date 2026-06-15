@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 benchmark_denorm.py — Compara tiempos de query entre:
-  - onpe.db       (modelo OLTP / joins en caliente)
+  - source_snapshot.db (baseline legacy / joins en caliente)
   - onpe_denorm.db (modelo BI denormalizado)
 
 Cubre permutaciones de: mesa exacta, rango de mesas, departamento,
@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 ROOT     = Path(__file__).parent.parent
-OLTP_DB  = ROOT / "data" / "onpe.db"
+OLTP_DB  = ROOT / "data" / "source_snapshot.db"
 DENORM_DB= ROOT / "data" / "onpe_denorm.db"
 
 RUNS = 5   # repeticiones por query para medir p50
@@ -698,7 +698,7 @@ def print_report(results: list[BenchResult]) -> None:
 
     print()
     print("=" * 105)
-    print(f"  BENCHMARK: onpe.db (OLTP) vs onpe_denorm.db (BI denorm)   |   {RUNS} runs/query, mediana")
+    print(f"  BENCHMARK: source_snapshot.db (legacy) vs onpe_denorm.db (BI denorm)   |   {RUNS} runs/query, mediana")
     print("=" * 105)
 
     total_saved = 0.0

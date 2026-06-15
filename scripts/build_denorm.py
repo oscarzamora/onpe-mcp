@@ -31,7 +31,7 @@ Nota sobre ubigeos
 Uso
 ───
   python scripts/build_denorm.py
-  python scripts/build_denorm.py --src data/onpe.db --dest data/onpe_denorm.db
+  python scripts/build_denorm.py --src /ruta/source_snapshot.db --dest data/onpe_denorm.db
   python scripts/build_denorm.py --validate-only   (sólo valida, sin reconstruir)
 """
 from __future__ import annotations
@@ -1019,7 +1019,11 @@ def validate(conn: sqlite3.Connection) -> dict[str, bool]:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Build onpe_denorm.db")
-    ap.add_argument("--src",  default=str(ROOT / "data" / "onpe.db"))
+    ap.add_argument(
+        "--src",
+        default=str(ROOT / "data" / "source_snapshot.db"),
+        help="Ruta de la DB fuente normalizada/snapshot para construir denorm",
+    )
     ap.add_argument("--dest", default=str(ROOT / "data" / "onpe_denorm.db"))
     ap.add_argument("--validate-only", action="store_true",
                     help="Only run validation against existing denorm DB")

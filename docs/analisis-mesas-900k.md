@@ -403,7 +403,7 @@ mcp_onpe-mcp_onpe_sv_comparacion_mesa(codigo_mesa="900100")
 mcp_onpe-mcp_onpe_sv_resultados_geo(nivel="departamento", nombre="Lima")
 ```
 
-### SQL directo sobre `data/onpe.db`
+### SQL directo sobre `data/onpe_denorm.db`
 
 ```sql
 -- 1) Universo agregado 900K en 1V

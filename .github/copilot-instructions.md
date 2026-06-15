@@ -17,11 +17,11 @@ This is a Python MCP server exposing 6 tools for querying Peruvian electoral res
 
 **Two API pathways run in parallel:**
 
-- `OnpeScraperGateway` (`gateway.py`) — dynamically imports `OnpeExtractor` from the sibling repo `onpescraper` by injecting its `src/` directory into `sys.path` at runtime. The sibling repo path is resolved from `ONPE_SCRAPER_ROOT` (or `../onpescraper` by default). This is why `server.py` has `# pyright: reportMissingImports=false` at the top.
+- `OnpeScraperGateway` (`gateway.py`) — dynamically imports `OnpeExtractor` from the sibling repo `onpeescraper` by injecting its `src/` directory into `sys.path` at runtime. The sibling repo path is resolved from `ONPE_SCRAPER_ROOT` (or `../onpeescraper` by default). This is why `server.py` has `# pyright: reportMissingImports=false` at the top.
 - `OnpeApiClient` (`onpe_api.py`) — direct HTTP client to `resultadoelectoral.onpe.gob.pe`. Uses `curl_cffi` with `impersonate="chrome124"` to bypass ONPE's bot detection; falls back to `urllib` if `curl_cffi` is not installed.
 
 **Persistence layer** (`storage.py` → `DataStore`):
-- `data/onpe.db` — SQLite, primary cache and query store (mesas, votos, agrupaciones, foreign ubigeos)
+- `data/onpe_denorm.db` — SQLite runtime única del MCP (facts/dims + tablas runtime cache)
 - `data/raw/events.jsonl` — append-only audit log of every tool call
 - `data/reports/` — markdown daily summaries
 
@@ -43,7 +43,7 @@ This is a Python MCP server exposing 6 tools for querying Peruvian electoral res
 
 **Error hierarchy**:
 - `ValueError` — validation failures (bad mesa code format, oversized batch)
-- `GatewayError` — `onpescraper` import or invocation failures
+- `GatewayError` — `onpeescraper` import or invocation failures
 - `OnpeApiError` — HTTP/JSON failures from ONPE endpoints
 
 **Acta selection priority** (implemented in both `OnpeApiClient._pick_mesa_acta` and `onpe_api.py`):
@@ -53,7 +53,5 @@ This is a Python MCP server exposing 6 tools for querying Peruvian electoral res
 4. First available
 
 **ONPE API tolerance** — field types from ONPE are mixed (`number|string`). Always coerce with `_to_int()`. Validate for `data` array presence before parsing. The API may return HTML instead of JSON if request headers don't properly impersonate a browser.
-
-**Legislative queries** (`onpe_chat` intent for `diputados`/`senadores`) — resolved via a live district-based endpoint, not SQLite. Uses `idEleccion=13` for diputados, `14` for senadores, with endpoint fallback on empty response.
 
 **Foreign geo catalog** — country/city data for overseas voters lives in the `ubigeos_extranjero` SQLite table, populated by `onpe_sync_foreign_catalog`. If `ONPE_AUTO_SYNC_FOREIGN_CATALOG_ON_DEMAND=true`, `onpe_chat` will trigger a sync automatically on cold start.

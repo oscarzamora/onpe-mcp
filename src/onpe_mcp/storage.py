@@ -186,9 +186,7 @@ class DataStore:
     def __init__(self, data_dir: Path) -> None:
         self.data_dir = data_dir
         # Runtime DB única del MCP: denorm (offline-first).
-        # onpe.db queda sólo como artefacto de construcción para build_denorm.py.
         self.db_path = data_dir / "onpe_denorm.db"
-        self.legacy_oltp_db_path = data_dir / "onpe.db"
         self.raw_dir = data_dir / "raw"
         self.reports_dir = data_dir / "reports"
         self.denorm_db_path = data_dir / "onpe_denorm.db"
@@ -198,7 +196,6 @@ class DataStore:
         self.raw_dir.mkdir(parents=True, exist_ok=True)
         self.reports_dir.mkdir(parents=True, exist_ok=True)
         self._init_schema()
-        self._migrate_legacy_oltp_if_needed()
 
     @property
     def denorm_available(self) -> bool:
@@ -408,7 +405,7 @@ class DataStore:
             conn.close()
 
     def _resultados_geo_1v_denorm(self, nivel: str, filtro: str | None, top_n: int) -> list[dict] | None:
-        """Returns resultados_geo_2026_1v result from denorm. None = use OLTP."""
+        """Returns resultados_geo_2026_1v result from denorm. None = use runtime SQL path."""
         try:
             conn = self._connect_denorm()
             try:
@@ -475,84 +472,6 @@ class DataStore:
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA temp_store=MEMORY")
         return conn
-
-    def _migrate_legacy_oltp_if_needed(self) -> None:
-        """One-shot copy of legacy onpe.db runtime tables into onpe_denorm.db.
-
-        This keeps MCP runtime denorm-only while preserving existing tool behavior
-        for tables that are hydrated from scrapers.
-        """
-        if self.legacy_oltp_db_path == self.db_path:
-            return
-        if not self.legacy_oltp_db_path.exists():
-            return
-
-        with self._connect() as conn:
-            # If already hydrated in denorm runtime tables, skip migration.
-            try:
-                row = conn.execute(
-                    """
-                    SELECT
-                      (SELECT COUNT(*) FROM mesas_data) AS c1,
-                      (SELECT COUNT(*) FROM votos) AS c2,
-                      (SELECT COUNT(*) FROM mesas_sv) AS c3,
-                      (SELECT COUNT(*) FROM votos_sv) AS c4,
-                      (SELECT COUNT(*) FROM mesas_2021) AS c5,
-                      (SELECT COUNT(*) FROM votos_2021) AS c6
-                    """
-                ).fetchone()
-                if row and all(int(row[k] or 0) > 0 for k in ("c1", "c2", "c3", "c4", "c5", "c6")):
-                    return
-            except Exception:
-                return
-
-            conn.execute("ATTACH DATABASE ? AS legacy", (str(self.legacy_oltp_db_path),))
-            try:
-                tables = conn.execute(
-                    """
-                    SELECT name
-                    FROM legacy.sqlite_master
-                    WHERE type='table'
-                      AND name NOT LIKE 'sqlite_%'
-                    """
-                ).fetchall()
-
-                for trow in tables:
-                    table = str(trow["name"])
-                    if table in {
-                        "dim_eleccion",
-                        "dim_partido",
-                        "dim_geo",
-                        "fact_votos_mesa",
-                        "fact_votos_ubigeo",
-                        "fact_votos_provincia",
-                        "fact_votos_departamento",
-                        "fact_votos_nacional",
-                        "fact_votos_pais",
-                    }:
-                        continue
-
-                    src_cols = [r["name"] for r in conn.execute(f'PRAGMA legacy.table_info("{table}")').fetchall()]
-                    if not src_cols:
-                        continue
-
-                    conn.execute(f'CREATE TABLE IF NOT EXISTS "{table}" AS SELECT * FROM legacy."{table}" WHERE 0')
-                    dst_cols = [r["name"] for r in conn.execute(f'PRAGMA table_info("{table}")').fetchall()]
-                    common = [c for c in src_cols if c in dst_cols]
-                    if not common:
-                        continue
-
-                    quoted = ", ".join(f'"{c}"' for c in common)
-                    conn.execute(f'DELETE FROM "{table}"')
-                    conn.execute(
-                        f'INSERT INTO "{table}" ({quoted}) SELECT {quoted} FROM legacy."{table}"'
-                    )
-                conn.commit()
-            finally:
-                try:
-                    conn.execute("DETACH DATABASE legacy")
-                except sqlite3.OperationalError:
-                    pass
 
     def _init_schema(self) -> None:
         with self._connect() as conn:
@@ -2494,7 +2413,7 @@ class DataStore:
                     ],
                 }
             except Exception as e:
-                _logger.debug("denorm fast-path failed for aggregate_votes_2021, falling back to OLTP: %s", e)
+                _logger.debug("denorm fast-path failed for aggregate_votes_2021, using runtime SQL path: %s", e)
         where = "WHERE v.vuelta = ?"
         params: list[Any] = [vuelta]
         where_m = "WHERE m.vuelta = ?"
@@ -2881,7 +2800,7 @@ class DataStore:
                 conn.close()
                 return [dict(r) for r in rows]
             except Exception as e:
-                _logger.debug("denorm fast-path failed for summary_2021, falling back to OLTP: %s", e)
+                _logger.debug("denorm fast-path failed for summary_2021, using runtime SQL path: %s", e)
         with self._connect() as conn:
             agg = conn.execute(
                 """
@@ -3236,7 +3155,7 @@ class DataStore:
                 conn.close()
                 return [dict(r) for r in rows]
             except Exception as e:
-                _logger.debug("denorm fast-path failed for summary_2026_1v, falling back to OLTP: %s", e)
+                _logger.debug("denorm fast-path failed for summary_2026_1v, using runtime SQL path: %s", e)
         with self._connect() as conn:
             agg = conn.execute(
                 """
@@ -3497,7 +3416,7 @@ class DataStore:
                 conn.close()
                 return [dict(r) for r in rows]
             except Exception as e:
-                _logger.debug("denorm fast-path failed for summary_2026_sv, falling back to OLTP: %s", e)
+                _logger.debug("denorm fast-path failed for summary_2026_sv, using runtime SQL path: %s", e)
         with self._connect() as conn:
             agg = conn.execute(
                 """
@@ -6371,7 +6290,7 @@ class DataStore:
                     result.append(d)
                 return result
             except Exception as e:
-                _logger.debug("denorm fast-path failed for query_sv_nacional, falling back to OLTP: %s", e)
+                _logger.debug("denorm fast-path failed for query_sv_nacional, using runtime SQL path: %s", e)
         with self._connect() as conn:
             rows = conn.execute(
                 """SELECT partido_id, nombre_candidato, nombre_agrupacion, votos_validos,
@@ -6573,7 +6492,7 @@ class DataStore:
                 if row:
                     return dict(row)
             except Exception as e:
-                _logger.debug("denorm fast-path failed for get_totales_nacionales_1v, falling back to OLTP: %s", e)
+                _logger.debug("denorm fast-path failed for get_totales_nacionales_1v, using runtime SQL path: %s", e)
         with self._connect() as conn:
             row = conn.execute(
                 """SELECT COUNT(*) AS mesas,
@@ -6647,7 +6566,7 @@ class DataStore:
                 conn.close()
                 return [dict(r) for r in rows]
             except Exception as e:
-                _logger.debug("denorm fast-path failed for get_top_partidos_1v, falling back to OLTP: %s", e)
+                _logger.debug("denorm fast-path failed for get_top_partidos_1v, using runtime SQL path: %s", e)
         with self._connect() as conn:
             rows = conn.execute(
                 """SELECT v.partido_id, COALESCE(a.nombre,'') AS nombre,
