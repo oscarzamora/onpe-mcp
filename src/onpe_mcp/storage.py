@@ -6488,9 +6488,45 @@ class DataStore:
                     WHERE election_year=2026 AND vuelta=1 AND es_especial=0
                     LIMIT 1
                 """).fetchone()
+                extras = conn.execute(
+                    """
+                    SELECT
+                      COALESCE(SUM(CASE WHEN partido_id='80' THEN votos END),0) AS blancos,
+                      COALESCE(SUM(CASE WHEN partido_id='81' THEN votos END),0) AS nulos,
+                      COALESCE(SUM(CASE WHEN partido_id='82' THEN votos END),0) AS impugnados
+                    FROM fact_votos_nacional
+                    WHERE election_year=2026 AND vuelta=1
+                    """
+                ).fetchone()
                 conn.close()
                 if row:
-                    return dict(row)
+                    electores = int(row["total_electores_habiles"] or 0)
+                    emitidos = int(row["total_votos_emitidos"] or 0)
+                    validos = int(row["total_votos_validos"] or 0)
+                    blancos = int(extras["blancos"] or 0) if extras else 0
+                    nulos = int(extras["nulos"] or 0) if extras else 0
+                    impug = int(extras["impugnados"] or 0) if extras else 0
+
+                    def _pct(n: int, d: int) -> float:
+                        return round(100.0 * n / d, 4) if d else 0.0
+
+                    return {
+                        "id_eleccion": 10,
+                        "mesas": int(row["total_mesas"] or 0),
+                        "electores_habiles": electores,
+                        "votos_emitidos": emitidos,
+                        "votos_validos": validos,
+                        "votos_blancos": blancos,
+                        "votos_nulos": nulos,
+                        "votos_impugnados": impug,
+                        "participacion_pct": _pct(emitidos, electores),
+                        "ausentismo_total": max(0, electores - emitidos),
+                        "ausentismo_pct": _pct(max(0, electores - emitidos), electores),
+                        "validos_pct_emitidos": _pct(validos, emitidos),
+                        "blancos_pct_emitidos": _pct(blancos, emitidos),
+                        "nulos_pct_emitidos": _pct(nulos, emitidos),
+                        "fecha_actualizacion": "",
+                    }
             except Exception as e:
                 _logger.debug("denorm fast-path failed for get_totales_nacionales_1v, using runtime SQL path: %s", e)
         with self._connect() as conn:

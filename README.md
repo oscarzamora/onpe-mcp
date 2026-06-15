@@ -267,6 +267,8 @@ python scripts/benchmark_denorm.py            # corre 26 queries baseline legacy
 | Tool | Descripción |
 |------|-------------|
 | `onpe_chat` | **Interfaz principal** — lenguaje natural, cache-first, intención automática. Soporta **2026 (1V+2V) + 2021 (histórico)** en modo local-only. Routea automáticamente por año. |
+| `onpe_query` | Motor analítico estructurado (fase inicial): `select + where + order_by + paginación` sobre facts denorm. |
+| `onpe_filter_mesas` | Atajo para búsqueda inversa por predicado de votos (ej. mesas con 0 votos de un partido). |
 | `onpe_get_mesa` | Consulta mesa 2026 1V por código desde cache/local DB |
 | `onpe_get_mesas_batch` | Hasta 200 mesas 2026 1V en paralelo desde cache/local DB |
 | `onpe_health` | Estado del servidor, DB 2026/2021 y cobertura de hidratación |

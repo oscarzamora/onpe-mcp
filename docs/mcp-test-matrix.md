@@ -50,12 +50,34 @@ Se validan consultas como:
 - Inputs: `ARGENTINA`, `CHILE`, `ESPAÑA`
 - Validación: respuesta `ok`, lista de resultados por país.
 
+### 4. Predicados analíticos (denorm)
+
+- Tool: `onpe_filter_mesas`
+- Ejemplo: `election_year=2026, vuelta=2, partido="8", votos_op="eq", votos_value=0`
+- Validación:
+  - `ok=true`
+  - contrato enumerable completo: `rows,total,returned,offset,limit,has_more`
+  - `query_echo` y `sql_explain` presentes
+  - `data_tier = tier_1_denorm`
+
+### 5. Query estructurado (fase inicial)
+
+- Tool: `onpe_query`
+- Ejemplo mínimo:
+  - `dataset=mesa`, `select=[codigo_mesa,partido_id,votos]`
+  - `where=[{field:partido_id,op:eq,value:8},{field:votos,op:eq,value:0}]`
+- Validación:
+  - devuelve filas correctas y paginación explícita
+  - rechaza features fuera de fase (`group_by`, `having`, `compare`) con `VALIDATION_ERROR`
+  - no acepta columnas fuera de whitelist
+
 ## Ejecución
 
 ```bash
 python -m pytest tests/test_mcp_smoke_queries.py -q --tb=short
 python -m pytest tests/test_enterprise_qa.py -q --tb=short
 python -m pytest tests/test_readme_mcp_permutations.py -q --tb=short
+python -m pytest tests/test_analytics_engine.py -q --tb=short
 ```
 
 ## Criterios de aceptación
@@ -63,3 +85,4 @@ python -m pytest tests/test_readme_mcp_permutations.py -q --tb=short
 1. Todas las suites MCP en verde.
 2. Sin rutas de error para las preguntas README 2026.
 3. Multi-input resuelto por herramientas MCP (batch/geo/pais) con shape consistente.
+4. Predicados analíticos responden desde denorm con contrato paginado auditable.

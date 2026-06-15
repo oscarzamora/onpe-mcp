@@ -7,6 +7,7 @@ import logging
 from typing import Any
 import re
 import unicodedata
+from pathlib import Path
 
 try:
     from mcp.server.fastmcp import FastMCP
@@ -18,6 +19,7 @@ from .gateway import GatewayError, OnpeScraperGateway
 from .knowledge_base import get_context_notes, get_fallback_qualitative, data_tier_label
 from .onpe_api import OnpeApiClient, OnpeApiError
 from .storage import DataStore
+from .analytics import AnalyticsEngine
 from .utils import (
     configure_logging,
     error_response,
@@ -41,6 +43,7 @@ logger = logging.getLogger("onpe_mcp")
 gateway = OnpeScraperGateway(settings)
 store = DataStore(settings.data_dir)
 onpe_api = OnpeApiClient()
+analytics_engine = AnalyticsEngine(Path(settings.data_dir) / "onpe_denorm.db")
 
 # Verificar si los datos SV están cargados
 try:
@@ -2662,6 +2665,77 @@ def onpe_comparacion_geo_cross_year(
         return ok_response(result, started_ms=started_ms, meta={"source": "sqlite_cross_year"})
     except Exception as exc:
         logger.exception("Error en onpe_comparacion_geo_cross_year")
+        return error_response(str(exc), started_ms=started_ms)
+
+
+@mcp.tool()
+def onpe_query(query_spec: dict[str, Any]) -> dict[str, Any]:
+    """Motor analítico estructurado (fase inicial): select + where + order + paginación.
+
+    Nota: `group_by`, `having` y comparación avanzada aún no están habilitados en esta fase.
+    """
+    started_ms = now_ms()
+    try:
+        result = analytics_engine.query(query_spec or {})
+        store.append_raw_event(
+            "onpe_query",
+            {"query_spec": query_spec, "total": result.get("total"), "returned": result.get("returned")},
+        )
+        return ok_response(result, started_ms=started_ms, meta={"source": "sqlite_denorm"})
+    except ValueError as exc:
+        return error_response(str(exc), started_ms=started_ms, code="VALIDATION_ERROR")
+    except Exception as exc:
+        logger.exception("Error en onpe_query")
+        return error_response(str(exc), started_ms=started_ms)
+
+
+@mcp.tool()
+def onpe_filter_mesas(
+    election_year: int = 2026,
+    vuelta: int = 2,
+    partido: str = "8",
+    votos_op: str = "eq",
+    votos_value: int = 0,
+    solo_escrutadas: bool = True,
+    mesa_prefix: str | None = None,
+    limit: int = 500,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """Búsqueda inversa de mesas por predicado de votos (azúcar sobre onpe_query)."""
+    started_ms = now_ms()
+    try:
+        normalized_prefix = str(mesa_prefix or "").strip() or None
+        if normalized_prefix is not None and not normalized_prefix.isdigit():
+            raise ValueError("mesa_prefix debe ser numérico")
+        result = analytics_engine.filter_mesas(
+            election_year=int(election_year),
+            vuelta=int(vuelta),
+            partido=str(partido),
+            votos_op=str(votos_op),
+            votos_value=votos_value,
+            solo_escrutadas=bool(solo_escrutadas),
+            mesa_prefix=normalized_prefix,
+            limit=int(limit),
+            offset=int(offset),
+        )
+        store.append_raw_event(
+            "onpe_filter_mesas",
+            {
+                "election_year": election_year,
+                "vuelta": vuelta,
+                "partido": partido,
+                "votos_op": votos_op,
+                "votos_value": votos_value,
+                "mesa_prefix": normalized_prefix,
+                "total": result.get("total"),
+                "returned": result.get("returned"),
+            },
+        )
+        return ok_response(result, started_ms=started_ms, meta={"source": "sqlite_denorm"})
+    except ValueError as exc:
+        return error_response(str(exc), started_ms=started_ms, code="VALIDATION_ERROR")
+    except Exception as exc:
+        logger.exception("Error en onpe_filter_mesas")
         return error_response(str(exc), started_ms=started_ms)
 
 
@@ -6043,13 +6117,15 @@ def onpe_chat(query: str, id_eleccion: int = 10, timeout: int = 10) -> dict[str,
             f"No identifiqué la intención para '{q}'. "
             "Prueba: una mesa ('mesa 012345'), un departamento ('top 3 en Loreto'), "
             "un lugar extranjero ('resultados en Santiago'), "
-            "legislativo ('senadores en Lima' o 'diputados para Arequipa'), "
             "o candidato ('candidato Fujimori')."
         )
         if qual_notes and qual_notes[0] != fallback_answer:
             fallback_answer += " — " + qual_notes[0]
         fallback = {
             "intent": "unknown",
+            "answerable": False,
+            "reason_code": "no_tool_for_request",
+            "contract_version": "1.1",
             "answer": fallback_answer,
             "result": {"qualitative_notes": qual_notes} if qual_notes else None,
             "source": "knowledge_base",
