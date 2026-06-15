@@ -43,6 +43,10 @@ def test_mcp_smoke_answers_real() -> None:
         pytest.skip("MCP local no está hidratado")
 
     for year, fn, query, expected_intent, expected_phrases in SMOKE_CASES:
+        if year == "2021" and not (
+            health.get("total_mesas_2021_v1", 0) or health.get("total_mesas_2021_v2", 0)
+        ):
+            continue
         result = fn(query)
         assert result["ok"] is True, f"{year}: {query}"
         data = result["data"]

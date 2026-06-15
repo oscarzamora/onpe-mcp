@@ -88,7 +88,9 @@ def test_A2_health_has_sv_info():
     assert "total_mesas_local" in d or "checks" in d
 
 
-def test_A3_sv_cobertura_shape():
+def test_A3_sv_cobertura_shape(sv_loaded):
+    if not sv_loaded:
+        pytest.skip("SV data not loaded")
     d = _ok(srv.onpe_sv_cobertura())
     # Tool wraps list in {"cobertura": [...], "total_departamentos": N}
     rows = d.get("cobertura") if isinstance(d, dict) else d
@@ -105,7 +107,9 @@ def test_A4_sv_reasignados_shape():
     assert isinstance(rows, list)
 
 
-def test_A5_sv_resultados_geo_nacional_shape():
+def test_A5_sv_resultados_geo_nacional_shape(sv_loaded):
+    if not sv_loaded:
+        pytest.skip("SV data not loaded")
     d = _ok(srv.onpe_sv_resultados_geo(nivel="nacional"))
     rows = d.get("resultados") if isinstance(d, dict) else d
     assert isinstance(rows, list)
@@ -127,13 +131,17 @@ def test_A7_sv_proyeccion_shape():
     assert rows is not None
 
 
-def test_A8_sv_estado_actas_shape():
+def test_A8_sv_estado_actas_shape(sv_loaded):
+    if not sv_loaded:
+        pytest.skip("SV data not loaded")
     d = _ok(srv.onpe_sv_estado_actas())
     assert "totales" in d
     assert d["totales"]["mesas"] > 0
 
 
-def test_A9_sv_comparacion_geo_lima():
+def test_A9_sv_comparacion_geo_lima(sv_loaded):
+    if not sv_loaded:
+        pytest.skip("SV data not loaded")
     d = _ok(srv.onpe_sv_comparacion_geo(ubigeo_prefix="140000"))
     assert d["primera_vuelta"]["mesas"] > 0
     assert d["segunda_vuelta"]["mesas"] > 0

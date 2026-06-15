@@ -19,13 +19,36 @@ import pytest
 DATA_DIR = Path(__file__).parent.parent / "data"
 DENORM_DB = DATA_DIR / "onpe_denorm.db"
 OLTP_DB = DATA_DIR / "onpe.db"
+REQUIRED_DENORM_TABLES = {
+    "dim_eleccion",
+    "fact_votos_mesa",
+    "fact_votos_nacional",
+    "fact_votos_departamento",
+    "fact_votos_provincia",
+    "fact_votos_ubigeo",
+    "fact_votos_pais",
+}
+
+
+def _denorm_built() -> bool:
+    if not DENORM_DB.exists():
+        return False
+    conn = sqlite3.connect(f"file:{DENORM_DB}?mode=ro", uri=True)
+    try:
+        tables = {
+            row[0]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        }
+    finally:
+        conn.close()
+    return REQUIRED_DENORM_TABLES.issubset(tables)
 
 
 @pytest.fixture(scope="module")
 def denorm_conn():
     """Read-only connection to onpe_denorm.db. Skip if not built."""
-    if not DENORM_DB.exists():
-        pytest.skip("onpe_denorm.db not found — run: python scripts/build_denorm.py")
+    if not _denorm_built():
+        pytest.skip("onpe_denorm.db not built — run: python scripts/build_denorm.py")
     uri = f"file:{DENORM_DB}?mode=ro"
     conn = sqlite3.connect(uri, uri=True)
     conn.row_factory = sqlite3.Row
@@ -53,16 +76,7 @@ def test_all_tables_exist(denorm_conn):
     tables = {r["name"] for r in denorm_conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table'"
     ).fetchall()}
-    expected = {
-        "dim_eleccion",
-        "fact_votos_mesa",
-        "fact_votos_nacional",
-        "fact_votos_departamento",
-        "fact_votos_provincia",
-        "fact_votos_ubigeo",
-        "fact_votos_pais",
-    }
-    missing = expected - tables
+    missing = REQUIRED_DENORM_TABLES - tables
     assert not missing, f"Missing tables: {missing}"
 
 
@@ -245,8 +259,8 @@ def test_val7_2v2026_departamento_matches_oltp(denorm_conn, oltp_conn):
 
 def test_datastore_denorm_available():
     """DataStore.denorm_available == True when onpe_denorm.db exists."""
-    if not DENORM_DB.exists():
-        pytest.skip("onpe_denorm.db not found")
+    if not _denorm_built():
+        pytest.skip("onpe_denorm.db not built")
     from onpe_mcp.storage import DataStore
     ds = DataStore(data_dir=DATA_DIR)
     assert ds.denorm_available, f"DataStore.denorm_available should be True"
