@@ -33,14 +33,11 @@ REQUIRED_DENORM_TABLES = {
 def _denorm_built() -> bool:
     if not DENORM_DB.exists():
         return False
-    conn = sqlite3.connect(f"file:{DENORM_DB}?mode=ro", uri=True)
-    try:
+    with sqlite3.connect(f"file:{DENORM_DB}?mode=ro", uri=True) as conn:
         tables = {
             row[0]
             for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         }
-    finally:
-        conn.close()
     return REQUIRED_DENORM_TABLES.issubset(tables)
 
 
