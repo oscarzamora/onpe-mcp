@@ -28,16 +28,20 @@ REQUIRED_DENORM_TABLES = {
     "fact_votos_ubigeo",
     "fact_votos_pais",
 }
+DENORM_SKIP_MESSAGE = "onpe_denorm.db not built — run: python scripts/build_denorm.py"
 
 
 def _denorm_built() -> bool:
     if not DENORM_DB.exists():
         return False
-    with sqlite3.connect(f"file:{DENORM_DB}?mode=ro", uri=True) as conn:
-        tables = {
-            row[0]
-            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-        }
+    try:
+        with sqlite3.connect(f"file:{DENORM_DB}?mode=ro", uri=True) as conn:
+            tables = {
+                row[0]
+                for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+            }
+    except sqlite3.Error:
+        return False
     return REQUIRED_DENORM_TABLES.issubset(tables)
 
 
@@ -45,7 +49,7 @@ def _denorm_built() -> bool:
 def denorm_conn():
     """Read-only connection to onpe_denorm.db. Skip if not built."""
     if not _denorm_built():
-        pytest.skip("onpe_denorm.db not built — run: python scripts/build_denorm.py")
+        pytest.skip(DENORM_SKIP_MESSAGE)
     uri = f"file:{DENORM_DB}?mode=ro"
     conn = sqlite3.connect(uri, uri=True)
     conn.row_factory = sqlite3.Row
@@ -257,7 +261,7 @@ def test_val7_2v2026_departamento_matches_oltp(denorm_conn, oltp_conn):
 def test_datastore_denorm_available():
     """DataStore.denorm_available == True when onpe_denorm.db exists."""
     if not _denorm_built():
-        pytest.skip("onpe_denorm.db not built")
+        pytest.skip(DENORM_SKIP_MESSAGE)
     from onpe_mcp.storage import DataStore
     ds = DataStore(data_dir=DATA_DIR)
     assert ds.denorm_available, f"DataStore.denorm_available should be True"
