@@ -19,6 +19,14 @@
 7. [Validación del modelo](#validación-del-modelo)
 8. [Conclusiones](#conclusiones)
 9. [Anexos: queries reproducibles](#anexos-queries-reproducibles)
+10. [Comparativa 2021 2V vs 2026 2V por departamento](#comparativa-2021-2v-vs-2026-2v-por-departamento)
+11. [Participación 2V 2026 por departamento](#participación-2v-2026-por-departamento)
+12. [Análisis por tamaño de mesa (2V 2026)](#análisis-por-tamaño-de-mesa-2v-2026)
+13. [Mesas con mayor margen por candidato — Top 20 nacional](#mesas-con-mayor-margen-por-candidato--top-20-nacional)
+14. [Estado de actas 900K (2V 2026)](#estado-de-actas-900k-2v-2026)
+15. [Desglose Puno por provincia (2V 2026)](#desglose-puno-por-provincia-2v-2026)
+16. [Primera vuelta 2021 — top partidos por departamento](#primera-vuelta-2021--top-partidos-por-departamento)
+17. [Consultas MCP 2021 con filtro de prefijo de mesas](#consultas-mcp-2021-con-filtro-de-prefijo-de-mesas)
 
 ---
 
@@ -451,7 +459,325 @@ ORDER BY (jxp + fp) DESC;
 
 ---
 
-## Limitaciones del análisis
+## Comparativa 2021 2V vs 2026 2V por departamento
+
+Porcentaje bipartidista de Keiko sobre votos válidos (Keiko vs el candidato de izquierda: Castillo en 2021, Sánchez en 2026). Δ positivo = Keiko mejoró; negativo = empeoró. Ordenado por Δ.
+
+| Departamento | Keiko % 2021 (vs Castillo) | Keiko % 2026 (vs Sánchez) | Δ Keiko (pp) | Mesas 2021 | Mesas 2026 |
+|---|---:|---:|---:|---:|---:|
+| Áncash | 29.6% | 33.6% | **+4.0** | 263 | 412 |
+| Cajamarca | 22.1% | 26.1% | **+4.0** | 374 | 636 |
+| Arequipa | 15.5% | 18.4% | **+2.9** | 35 | 44 |
+| Ucayali | 33.8% | 36.4% | **+2.6** | 32 | 77 |
+| **Lima** | 49.3% | **51.8%** | **+2.5** | 254 | 239 |
+| Huancavelica | 11.3% | 13.4% | +2.1 | 171 | 235 |
+| Amazonas | 24.4% | 26.3% | +1.9 | 183 | 239 |
+| Puno | 6.1% | 7.7% | +1.6 | 111 | 289 |
+| Cusco | 9.7% | 11.0% | +1.3 | 166 | 253 |
+| Huánuco | 21.2% | 22.3% | +1.1 | 196 | 290 |
+| Ayacucho | 13.8% | 14.9% | +1.1 | 159 | 215 |
+| Lambayeque | 51.2% | 51.8% | +0.6 | 149 | 190 |
+| San Martín | 37.2% | 37.2% | 0.0 | 160 | 237 |
+| Moquegua | 8.6% | 8.6% | 0.0 | 8 | 14 |
+| Madre de Dios | 21.4% | 20.7% | −0.7 | 32 | 34 |
+| Pasco | 39.3% | 37.3% | −2.0 | 19 | 42 |
+| Piura | 45.2% | 42.9% | −2.3 | 199 | 371 |
+| Tacna | 18.6% | 15.6% | −3.0 | 12 | 18 |
+| Junín | 47.9% | 44.5% | −3.4 | 138 | 194 |
+| La Libertad | 45.8% | 41.3% | −4.5 | 143 | 208 |
+| Apurímac | 17.8% | 11.6% | −6.2 | 88 | 154 |
+| Loreto | 42.8% | 36.5% | −6.3 | 213 | 295 |
+| Ica | 38.6% | 31.0% | −7.6 | 3 | 7 |
+| Tumbes | — (0 mesas 900K en 2021) | 75.9% | n/a | 0 | 6 |
+
+### Lecturas del desglose
+
+1. **El mapa rural es notablemente estable.** La mayoría de departamentos se mueve menos de ±5 pp entre 2021 y 2026. El "techo de Keiko" en el campo es estructural, no coyuntural.
+2. **Solo dos plazas rurales son competitivas para Keiko, y ahí mejoró:** Lambayeque (51.8%) y Lima rural (49.3% → 51.8%, su mayor avance neto entre los grandes).
+3. **Costa norte agrícola se le erosionó:** La Libertad (−4.5), Piura (−2.3), Loreto (−6.3), Ica (−7.6). Donde tenía algo que perder, perdió.
+4. **Sur andino sigue siendo muro:** Puno (7.7%), Moquegua (8.6%), Cusco (11.0%), Apurímac (11.6%), Huancavelica (13.4%). Keiko no pasa del 14%.
+5. **Apurímac es el caso de mayor caída** (−6.2 pp), pasando de un ya bajo 17.8% a 11.6%.
+6. **Tumbes 900K es nuevo** (sin mesas en 2021) y es el único departamento rural donde Keiko domina (75.9%) — consistente con su fuerza histórica en Tumbes.
+
+> ⚠️ El número de mesas 900K por departamento difiere entre años (p. ej. Cajamarca 374 → 636, Áncash 263 → 412), por lo que se comparan proporciones bipartidistas, no votos absolutos. El universo creció +1,595 mesas entre elecciones.
+
+---
+
+## Participación 2V 2026 por departamento
+
+Tasa de participación (votos emitidos / electores hábiles) en el bloque 900K por departamento, de mayor a menor.
+
+| Departamento | Mesas | Electores | Emitidos | Participación | Mesas contabilizadas |
+|---|---:|---:|---:|---:|---:|
+| **Lima** | 239 | 62,307 | 51,788 | **83.1%** | 235 |
+| Tacna | 18 | 4,121 | 3,335 | 80.9% | 18 |
+| Puno | 289 | 63,907 | 51,333 | 80.3% | 286 |
+| San Martín | 237 | 58,735 | 45,790 | 78.0% | 235 |
+| Tumbes | 6 | 1,719 | 1,302 | 75.7% | 6 |
+| Moquegua | 14 | 2,497 | 1,880 | 75.3% | 14 |
+| Lambayeque | 190 | 48,534 | 36,382 | 75.0% | 190 |
+| Apurímac | 154 | 34,732 | 25,900 | 74.6% | 151 |
+| Piura | 371 | 96,843 | 72,033 | 74.4% | 368 |
+| Áncash | 412 | 93,332 | 68,196 | 73.1% | 407 |
+| Cajamarca | 636 | 153,418 | 110,847 | 72.3% | 632 |
+| Arequipa | 44 | 9,267 | 6,679 | 72.1% | 44 |
+| Cusco | 253 | 58,999 | 42,506 | 72.1% | 248 |
+| Huancavelica | 235 | 51,884 | 37,350 | 72.0% | 234 |
+| Huánuco | 290 | 65,923 | 47,017 | 71.3% | 287 |
+| Ayacucho | 215 | 44,778 | 31,640 | 70.7% | 213 |
+| Madre de Dios | 34 | 8,721 | 6,121 | 70.2% | 34 |
+| La Libertad | 208 | 52,445 | 36,750 | 70.1% | 208 |
+| Junín | 194 | 45,380 | 31,730 | 69.9% | 193 |
+| Amazonas | 239 | 53,623 | 37,342 | 69.6% | 239 |
+| Ica | 7 | 1,486 | 1,022 | 68.8% | 7 |
+| Pasco | 42 | 8,067 | 5,501 | 68.2% | 42 |
+| **Loreto** | 299 | 71,660 | 38,988 | **54.4%** | 293 |
+| **Ucayali** | 77 | 17,498 | 9,352 | **53.5%** | 76 |
+| **PROMEDIO 900K** | **4,703** | **1,109,876** | **800,784** | **72.2%** | **4,660** |
+
+> Lima 900K (83.1%) tiene la participación más alta del bloque — 11 pp sobre el promedio. Loreto y Ucayali presentan la participación más baja (53–54%), consistente con las dificultades logísticas de las mesas en selva profunda.
+
+---
+
+## Análisis por tamaño de mesa (2V 2026)
+
+Las mesas 900K se agrupan en tres rangos de padrón. No existe ninguna mesa 900K con más de 300 electores (no hay "grandes").
+
+| Tamaño | Mesas (est.) | Electores | Participación | Keiko (FP) % | Sánchez (JxP) % |
+|---|---:|---:|---:|---:|---:|
+| Micro (≤100 electores) | ~51 | ~4,206 | 72.2% | **31.1%** | 68.9% |
+| Pequeña (101–200 electores) | ~910 | ~154,645 | 72.5% | 24.5% | **75.5%** |
+| Mediana (201–300 electores) | ~3,742 | ~950,312 | 72.1% | 30.8% | 69.2% |
+| Grande (>300 electores) | 0 | — | — | — | — |
+| **Total 900K** | **4,703** | **1,109,876** | **72.2%** | **29.9%** | **70.1%** |
+
+### Observaciones
+
+- **La participación es uniforme entre tamaños** (~72% en todos los rangos). El tamaño del padrón de la mesa no afecta la movilización en zonas rurales.
+- **Las mesas pequeñas (101–200) son significativamente más pro-Sánchez** (75.5%) que las medianas (69.2%) y micro (68.9%). Esto se explica porque muchas mesas pequeñas están en comunidades nativas y andinas del sur donde el voto de izquierda es más concentrado.
+- **Las mesas micro (≤100) tienen el mayor porcentaje de Keiko** (31.1%), posiblemente reflejo de comunidades muy pequeñas con dinámicas locales más variables.
+
+---
+
+## Mesas con mayor margen por candidato — Top 20 nacional
+
+### Top 20 mesas con mayor margen para Keiko Fujimori (FP)
+
+| Mesa | Departamento | Provincia | Distrito | Electores | FP | JxP | Margen FP |
+|---|---|---|---|---:|---:|---:|---:|
+| 903476 | Loreto | M. R. Castilla | Santa Rosa de Loreto | 142 | 113 | 0 | **100.0%** |
+| 903142 | Lima | Huarochirí | S. J. de Tantaranche | 91 | 52 | 0 | **100.0%** |
+| 902491 | Junín | Satipo | Mazamari | 151 | 55 | 0 | **100.0%** |
+| 903451 | Loreto | M. R. Castilla | Yavarí | 283 | 147 | 2 | 98.7% |
+| 903547 | Loreto | Loreto | Urarinas | 190 | 65 | 2 | 97.0% |
+| 903561 | Loreto | Requena | Alto Tapiche | 72 | 30 | 1 | 96.8% |
+| 903455 | Loreto | M. R. Castilla | Yavarí | 240 | 56 | 2 | 96.6% |
+| 903960 | Piura | Paita | Paita | 243 | 180 | 7 | 96.3% |
+| 903961 | Piura | Paita | Paita | 243 | 177 | 7 | 96.2% |
+| 903179 | Lima | Oyón | Pachangara | 155 | 104 | 5 | 95.4% |
+| 903558 | Loreto | Putumayo | Yaguas | 175 | 82 | 4 | 95.3% |
+| 903965 | Piura | Paita | Paita | 284 | 211 | 11 | 95.0% |
+| 903555 | Loreto | Putumayo | Putumayo | 97 | 31 | 2 | 93.9% |
+| 903546 | Loreto | Loreto | Urarinas | 191 | 62 | 4 | 93.9% |
+| 903962 | Piura | Paita | Paita | 273 | 195 | 13 | 93.8% |
+| 903458 | Loreto | M. R. Castilla | Yavarí | 260 | 59 | 4 | 93.7% |
+| 903530 | Loreto | Loreto | Tigre | 222 | 111 | 8 | 93.3% |
+| 903964 | Piura | Paita | Paita | 284 | 206 | 16 | 92.8% |
+| 903456 | Loreto | M. R. Castilla | Yavarí | 260 | 71 | 6 | 92.2% |
+| 903963 | Piura | Paita | Paita | 285 | 209 | 18 | 92.1% |
+
+> Las mesas con mayor margen Keiko se concentran en **Loreto (Mariscal Ramón Castilla / Yavarí, Putumayo, Tigre)** y **Piura (Paita)**. El distrito de Yavarí tiene múltiples mesas 100K% Keiko, frontera con Brasil. Paita (Piura) muestra un cluster de 5 mesas con >92% Keiko.
+
+### Top 20 mesas con mayor margen para Roberto Sánchez (JxP)
+
+| Mesa | Departamento | Provincia | Distrito | Electores | FP | JxP | Margen JxP |
+|---|---|---|---|---:|---:|---:|---:|
+| 904649 | Ucayali | Atalaya | Tahuania | 194 | 0 | 71 | **100.0%** |
+| 904114 | Puno | Carabaya | Ayapata | 98 | 0 | 73 | **100.0%** |
+| 903443 | Loreto | Datem del Marañón | Pastaza | 135 | 0 | 88 | **100.0%** |
+| 903439 | Loreto | Datem del Marañón | Pastaza | 203 | 0 | 80 | **100.0%** |
+| 903438 | Loreto | Datem del Marañón | Pastaza | 203 | 0 | 67 | **100.0%** |
+| 903433 | Loreto | Datem del Marañón | Pastaza | 162 | 0 | 78 | **100.0%** |
+| 903427 | Loreto | Datem del Marañón | Morona | 197 | 0 | 52 | **100.0%** |
+| 903416 | Loreto | Datem del Marañón | Manseriche | 229 | 0 | 157 | **100.0%** |
+| 903415 | Loreto | Datem del Marañón | Manseriche | 230 | 0 | 133 | **100.0%** |
+| 903404 | Loreto | Datem del Marañón | Cahuapanas | 214 | 0 | 149 | **100.0%** |
+| 903398 | Loreto | Datem del Marañón | Cahuapanas | 267 | 0 | 122 | **100.0%** |
+| 903389 | Loreto | Datem del Marañón | Andoas | 220 | 0 | 96 | **100.0%** |
+| 901615 | Cajamarca | San Ignacio | Tabaconas | 279 | 0 | 193 | **100.0%** |
+| 901555 | Cajamarca | San Ignacio | Huarango | 298 | 0 | 205 | **100.0%** |
+| 901523 | Cajamarca | Jaén | Sallique | 248 | 0 | 148 | **100.0%** |
+| 900838 | Arequipa | Condesuyos | Cayarani | 236 | 0 | 111 | **100.0%** |
+| 900100 | Amazonas | Condorcanqui | El Cenepa | 248 | 0 | 194 | **100.0%** |
+| 900097 | Amazonas | Condorcanqui | El Cenepa | 164 | 0 | 80 | **100.0%** |
+| 900096 | Amazonas | Condorcanqui | El Cenepa | 161 | 0 | 90 | **100.0%** |
+| 900089 | Amazonas | Condorcanqui | El Cenepa | 246 | 0 | 166 | **100.0%** |
+
+> Las mesas con mayor margen Sánchez se concentran en **Loreto (Datem del Marañón — Pastaza, Morona, Manseriche, Cahuapanas, Andoas)**, **Cajamarca (San Ignacio y Jaén)**, **Amazonas (Condorcanqui / El Cenepa)**, **Arequipa (Condesuyos / Cayarani)** y **Ucayali (Atalaya)**. El distrito de Datem del Marañón es una zona de pueblos indígenas amazónicos donde FP obtuvo literalmente 0 votos en 12 mesas.
+
+---
+
+## Estado de actas 900K (2V 2026)
+
+| Estado | Mesas | Electores hábiles | Votos emitidos |
+|---|---:|---:|---:|
+| **C** — Contabilizada | 4,660 | 1,100,165 | 800,784 |
+| **E** — En proceso / Escrutinio | 39 | 8,998 | 0 |
+| **P** — Pendiente | 4 | 713 | 0 |
+| **TOTAL** | **4,703** | **1,109,876** | **800,784** |
+
+> Al cierre del análisis (2026-06-12), el **99.1% de las mesas 900K están contabilizadas** (4,660 / 4,703). Solo 43 actas (39 en proceso + 4 pendientes) aún no tienen votos computados — representan ~9,711 electores hábiles (0.9% del padrón 900K). El análisis de votos en todas las secciones de este documento usa únicamente las 4,660 actas contabilizadas.
+
+---
+
+## Desglose Puno por provincia (2V 2026)
+
+Puno es el departamento sur andino más grande del bloque 900K (289 mesas, 63,907 electores) y uno de los más pro-Sánchez a nivel nacional. Este desglose muestra que el patrón es homogéneo en todas sus provincias.
+
+| Provincia | Mesas | Votos JxP | JxP % | Votos FP | FP % |
+|---|---:|---:|---:|---:|---:|
+| Puno | 56 | 8,559 | 91.1% | 834 | 8.9% |
+| Chucuito | 44 | 6,912 | 93.7% | 465 | 6.3% |
+| Azángaro | 35 | 6,120 | 93.8% | 405 | 6.2% |
+| El Collao | 27 | 4,806 | 92.4% | 397 | 7.6% |
+| Carabaya | 33 | 4,475 | 90.1% | 490 | 9.9% |
+| Huancané | 20 | 3,302 | 95.3% | 164 | 4.7% |
+| Sandia | 20 | 3,119 | 90.4% | 333 | 9.6% |
+| San Román | 16 | 2,851 | 91.3% | 271 | 8.7% |
+| Moho | 20 | 2,713 | 94.1% | 171 | 5.9% |
+| Melgar | 10 | 1,581 | 91.3% | 151 | 8.7% |
+| San Antonio de Putina | 6 | 949 | 91.9% | 84 | 8.1% |
+| Yunguyo | 1 | 189 | 91.3% | 18 | 8.7% |
+| Lampa | 1 | 106 | 83.5% | 21 | 16.5% |
+
+> **El muro electoral de Puno es uniforme:** todas las provincias dan a Sánchez entre 83.5% y 95.3%. Huancané (95.3%) y Moho (94.1%), en la frontera norte con Bolivia, son las más pro-Sánchez. Lampa (83.5%) y Carabaya (90.1%) son las más moderadas dentro del propio Puno. No existe una sola provincia puneña donde Keiko supere el 17%.
+
+---
+
+## Primera vuelta 2021 — top partidos por departamento
+
+Resultado de la primera vuelta 2021 en el bloque 900K, desglosado por departamento para los 8 más grandes.
+
+### Áncash (263 mesas, 90,578 votos válidos)
+
+| Pos. | Candidato | Partido | Votos |
+|---:|---|---|---:|
+| 1 | Pedro Castillo | Perú Libre | 12,659 |
+| 2 | Keiko Fujimori | Fuerza Popular | 4,762 |
+| 3 | Yonhy Lescano | Acción Popular | 2,940 |
+| 4 | Verónika Mendoza | Juntos por el Perú | 2,661 |
+| 5 | César Acuña | Alianza para el Progreso | 1,495 |
+
+### Cajamarca (374 mesas, 135,036 votos válidos)
+
+| Pos. | Candidato | Partido | Votos |
+|---:|---|---|---:|
+| 1 | Pedro Castillo | Perú Libre | 24,137 |
+| 2 | Keiko Fujimori | Fuerza Popular | 5,047 |
+| 3 | Yonhy Lescano | Acción Popular | 3,422 |
+| 4 | César Acuña | Alianza para el Progreso | 2,560 |
+| 5 | Verónika Mendoza | Juntos por el Perú | 2,110 |
+
+### Cusco (166 mesas, 59,264 votos válidos)
+
+| Pos. | Candidato | Partido | Votos |
+|---:|---|---|---:|
+| 1 | Pedro Castillo | Perú Libre | 9,586 |
+| 2 | Verónika Mendoza | Juntos por el Perú | 3,718 |
+| 3 | Yonhy Lescano | Acción Popular | 1,843 |
+| 4 | Keiko Fujimori | Fuerza Popular | 1,207 |
+| 5 | Ollanta Humala | Partido Nacionalista Peruano | 490 |
+
+### Huánuco (196 mesas, 66,390 votos válidos)
+
+| Pos. | Candidato | Partido | Votos |
+|---:|---|---|---:|
+| 1 | Pedro Castillo | Perú Libre | 11,171 |
+| 2 | Keiko Fujimori | Fuerza Popular | 2,337 |
+| 3 | Yonhy Lescano | Acción Popular | 2,038 |
+| 4 | Rafael López Aliaga | Renovación Popular | 1,549 |
+| 5 | César Acuña | Alianza para el Progreso | 1,226 |
+
+### Lima (254 mesas, 110,218 votos válidos)
+
+| Pos. | Candidato | Partido | Votos |
+|---:|---|---|---:|
+| 1 | **Keiko Fujimori** | Fuerza Popular | **8,987** |
+| 2 | Pedro Castillo | Perú Libre | 8,558 |
+| 3 | Rafael López Aliaga | Renovación Popular | 5,453 |
+| 4 | Hernando de Soto | Avanza País | 3,925 |
+| 5 | Yonhy Lescano | Acción Popular | 3,601 |
+
+### Loreto (213 mesas, 58,752 votos válidos)
+
+| Pos. | Candidato | Partido | Votos |
+|---:|---|---|---:|
+| 1 | **Keiko Fujimori** | Fuerza Popular | **3,224** |
+| 2 | Ollanta Humala | Partido Nacionalista Peruano | 3,033 |
+| 3 | César Acuña | Alianza para el Progreso | 2,516 |
+| 4 | Yonhy Lescano | Acción Popular | 2,481 |
+| 5 | George Forsyth | Victoria Nacional | 1,960 |
+
+### Piura (199 mesas, 77,322 votos válidos)
+
+| Pos. | Candidato | Partido | Votos |
+|---:|---|---|---:|
+| 1 | **Keiko Fujimori** | Fuerza Popular | **7,256** |
+| 2 | Pedro Castillo | Perú Libre | 6,505 |
+| 3 | Yonhy Lescano | Acción Popular | 1,738 |
+| 4 | Verónika Mendoza | Juntos por el Perú | 1,733 |
+| 5 | Ollanta Humala | Partido Nacionalista Peruano | 1,570 |
+
+### Puno (111 mesas, 43,356 votos válidos)
+
+| Pos. | Candidato | Partido | Votos |
+|---:|---|---|---:|
+| 1 | Pedro Castillo | Perú Libre | 9,068 |
+| 2 | Yonhy Lescano | Acción Popular | 3,922 |
+| 3 | Verónika Mendoza | Juntos por el Perú | 1,090 |
+| 4 | Keiko Fujimori | Fuerza Popular | 423 |
+| 5 | Ollanta Humala | Partido Nacionalista Peruano | 377 |
+
+> **Patrón Lima 900K en 1V es único:** es el único departamento donde Keiko ganó en 1V dentro del bloque 900K (8,987 vs 8,558 de Castillo). En Loreto y Piura también lidera en 1V. En el sur andino (Puno, Cusco, Ayacucho), Keiko queda 4ª o más abajo.
+
+---
+
+## Consultas MCP 2021 con filtro de prefijo de mesas
+
+Desde la versión actual del servidor, `onpe_2021_chat` soporta filtrado por prefijo de mesa. Esto permite replicar las consultas del bloque 900K directamente para 2021.
+
+### Ejemplos funcionales
+
+```python
+# Top 5 en mesas 900K — 2021 segunda vuelta
+mcp_onpe-mcp_onpe_2021_chat("top en mesas 900K segunda vuelta", vuelta=2)
+# → 3,108 mesas, Castillo 380,932 (69.5%), Keiko 167,309 (30.5%)
+
+# Top 5 en mesas 900K — 2021 primera vuelta
+mcp_onpe-mcp_onpe_2021_chat("top en mesas prefijo 9 primera vuelta", vuelta=1)
+# → 3,108 mesas, Castillo 140,021, Keiko 59,437, Lescano 38,308
+
+# Mismo bloque pero como query SQL
+mcp_onpe-mcp_onpe_2021_chat("resultados bloque 900 segunda vuelta 2021")
+```
+
+### Datos de referencia 2021 2V — bloque 900K
+
+| Indicador | Valor |
+|---|---:|
+| Mesas 900K | 3,108 |
+| Electores hábiles | 778,663 |
+| Votos emitidos | 589,952 |
+| Participación | 75.77% |
+| Votos válidos | 548,241 |
+| **Pedro Castillo** (Perú Libre) | **380,932 (69.5%)** |
+| **Keiko Fujimori** (Fuerza Popular) | **167,309 (30.5%)** |
+| Blancos | 7,745 |
+| Nulos | 33,966 |
+
+> El bloque 900K creció de **3,108 mesas en 2021** a **4,703 en 2026** (+1,595 mesas, +51%). El patrón 70/30 se mantiene casi idéntico en ambas segundas vueltas, confirmando que la estructura del voto rural es estructural.
+
+
 
 1. **Cobertura 2V no es 100%** (98.25% al cierre del análisis). 1,620 actas siguen en proceso (anuladas, observadas o pendientes).
 2. **El modelo NNLS asume linealidad** en la transferencia de votos. Casos extremos (mesas con candidato local fuerte en 1V) pueden tener flujos no-lineales.

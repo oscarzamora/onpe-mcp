@@ -2732,35 +2732,53 @@ def onpe_2021_chat(query: str, vuelta: int | None = None) -> dict[str, Any]:
         top_n = extract_top_n(q, default=5, minimum=1, maximum=20)
         geo = _extract_geo_fragment_2021(q, q_norm)
 
+        # ── Detect mesa prefix/range ("mesas 900K", "prefijo 9", "bloque 900") ──
+        _prefix_2021_m = re.search(
+            r"\b(?:mesa(?:s)?\s+)?(?:prefijo\s+|bloque\s+)?(\d{1,4})[Kk]\b"
+            r"|\b(?:mesa(?:s)?\s+)?(?:prefijo\s+|bloque\s+)(\d{1,4})\b"
+            r"|\bmesas?\s+(\d{1,4})\b",
+            q,
+            re.IGNORECASE,
+        )
+        mesa_prefix_2021: str | None = None
+        if _prefix_2021_m:
+            raw_px = next(g for g in _prefix_2021_m.groups() if g is not None)
+            # Only treat as prefix if it looks like a 1-4 digit block (not a 6-digit exact code)
+            if raw_px.isdigit() and len(raw_px) <= 4:
+                mesa_prefix_2021 = raw_px
+
         mesa_match = re.search(r"\b(\d{1,6})\b", q)
-        if mesa_match and "mesa" in q_norm:
-            code = validate_mesa_code(mesa_match.group(1))
-            mesa = store.get_mesa_2021_from_local(code, vuelta=round_2021)
-            if mesa is None:
+        if mesa_match and "mesa" in q_norm and not mesa_prefix_2021:
+            # Only treat as exact 6-digit mesa if it's actually 6 digits or explicitly a single mesa
+            raw_code = mesa_match.group(1)
+            if len(raw_code) == 6:
+                code = validate_mesa_code(raw_code)
+                mesa = store.get_mesa_2021_from_local(code, vuelta=round_2021)
+                if mesa is None:
+                    return ok_response(
+                        {
+                            "intent": "mesa_2021",
+                            "answer": f"Mesa {code} no encontrada en 2021 vuelta {round_2021}.",
+                            "result": {"found": False, "codigo_mesa": code, "vuelta": round_2021},
+                            "source": "sqlite_2021",
+                        },
+                        started_ms=started_ms,
+                    )
+                top = mesa["votos"][:3]
+                top_txt = ", ".join(f"{x['candidato'] or x['partido']} {x['votos']:,}v" for x in top)
                 return ok_response(
                     {
                         "intent": "mesa_2021",
-                        "answer": f"Mesa {code} no encontrada en 2021 vuelta {round_2021}.",
-                        "result": {"found": False, "codigo_mesa": code, "vuelta": round_2021},
+                        "answer": (
+                            f"Mesa {mesa['codigo_mesa']} (2021 {'2da' if round_2021 == 2 else '1ra'} vuelta, "
+                            f"{mesa['departamento']} / {mesa['provincia']} / {mesa['distrito']}): "
+                            f"{mesa['votos_emitidos']:,} emitidos, {mesa['votos_validos']:,} válidos. Top: {top_txt}."
+                        ),
+                        "result": mesa,
                         "source": "sqlite_2021",
                     },
                     started_ms=started_ms,
                 )
-            top = mesa["votos"][:3]
-            top_txt = ", ".join(f"{x['candidato'] or x['partido']} {x['votos']:,}v" for x in top)
-            return ok_response(
-                {
-                    "intent": "mesa_2021",
-                    "answer": (
-                        f"Mesa {mesa['codigo_mesa']} (2021 {'2da' if round_2021 == 2 else '1ra'} vuelta, "
-                        f"{mesa['departamento']} / {mesa['provincia']} / {mesa['distrito']}): "
-                        f"{mesa['votos_emitidos']:,} emitidos, {mesa['votos_validos']:,} válidos. Top: {top_txt}."
-                    ),
-                    "result": mesa,
-                    "source": "sqlite_2021",
-                },
-                started_ms=started_ms,
-            )
 
         cand_query = None
         _cand_match = re.search(
@@ -2770,7 +2788,7 @@ def onpe_2021_chat(query: str, vuelta: int | None = None) -> dict[str, Any]:
         )
         if _cand_match:
             cand_query = _cand_match.group(1).strip()
-        if cand_query:
+        if cand_query and not mesa_prefix_2021:
             cand = store.get_candidate_votes_2021(vuelta=round_2021, candidate_query=cand_query, geo_query=geo)
             if cand:
                 place = f" en {cand['filtro']}" if cand.get("filtro") else ""
@@ -2787,10 +2805,17 @@ def onpe_2021_chat(query: str, vuelta: int | None = None) -> dict[str, Any]:
                     started_ms=started_ms,
                 )
 
-        agg = store.aggregate_votes_2021(vuelta=round_2021, geo_query=geo, top_n=top_n)
-        title_geo = f" en {agg['filtro']}" if agg.get("filtro") else " a nivel nacional"
+        agg = store.aggregate_votes_2021(vuelta=round_2021, geo_query=geo, mesa_prefix=mesa_prefix_2021, top_n=top_n)
+        vuelta_label = "2da" if round_2021 == 2 else "1ra"
+        if mesa_prefix_2021:
+            display_suffix = "K" if len(mesa_prefix_2021) <= 3 else ""
+            title_geo = f" — mesas {mesa_prefix_2021}{display_suffix}"
+        elif agg.get("filtro"):
+            title_geo = f" en {agg['filtro']}"
+        else:
+            title_geo = " a nivel nacional"
         lines = [
-            f"**Top {top_n} 2021 {'2da' if round_2021 == 2 else '1ra'} vuelta{title_geo}** "
+            f"**Top {top_n} 2021 {vuelta_label} vuelta{title_geo}** "
             f"({agg['mesas']:,} mesas, {agg['votos_emitidos']:,} votos emitidos)",
             "",
         ]
@@ -2798,7 +2823,7 @@ def onpe_2021_chat(query: str, vuelta: int | None = None) -> dict[str, Any]:
             lines.append(f"{i}. **{r['candidato'] or r['nombre_partido']}** — {r['total_votos']:,} votos")
         return ok_response(
             {
-                "intent": "ranking_2021",
+                "intent": "ranking_2021" if not mesa_prefix_2021 else "ranking_2021_prefix",
                 "answer": "\n".join(lines),
                 "result": agg,
                 "source": "sqlite_2021",

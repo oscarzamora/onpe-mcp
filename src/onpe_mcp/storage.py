@@ -2459,12 +2459,14 @@ class DataStore:
         *,
         vuelta: int,
         geo_query: str | None = None,
+        mesa_prefix: str | None = None,
         top_n: int = 10,
     ) -> dict[str, Any]:
         vuelta = 1 if int(vuelta) == 1 else 2
         top_n = max(1, min(int(top_n), 30))
         col, val = self._resolve_geo_filter_2021(vuelta, geo_query)
-        if self.denorm_available and not col:
+        # Use denorm fast-path only when no filters at all
+        if self.denorm_available and not col and not mesa_prefix:
             try:
                 conn = self._connect_denorm()
                 rows = conn.execute("""
@@ -2478,6 +2480,7 @@ class DataStore:
                     "vuelta": vuelta,
                     "nivel": "nacional",
                     "filtro": None,
+                    "mesa_prefix": None,
                     "mesas": 0,
                     "votos_emitidos": 0,
                     "top": [
@@ -2494,9 +2497,20 @@ class DataStore:
                 _logger.debug("denorm fast-path failed for aggregate_votes_2021, falling back to OLTP: %s", e)
         where = "WHERE v.vuelta = ?"
         params: list[Any] = [vuelta]
+        where_m = "WHERE m.vuelta = ?"
+        params_m: list[Any] = [vuelta]
         if col and val:
             where += f" AND m.{col} = ?"
             params.append(val)
+            where_m += f" AND m.{col} = ?"
+            params_m.append(val)
+        if mesa_prefix:
+            lp = self._mesa_prefix_like(mesa_prefix)
+            pat = f"{lp}%"
+            where += " AND m.codigo_mesa LIKE ?"
+            params.append(pat)
+            where_m += " AND m.codigo_mesa LIKE ?"
+            params_m.append(pat)
         with self._connect() as conn:
             rows = conn.execute(
                 f"""
@@ -2513,17 +2527,14 @@ class DataStore:
                 [*params, top_n],
             ).fetchall()
             totals = conn.execute(
-                f"""
-                SELECT COUNT(*) AS mesas, COALESCE(SUM(m.votos_emitidos),0) AS votos_emitidos
-                FROM mesas_2021 m
-                WHERE m.vuelta = ? {f"AND m.{col} = ?" if col and val else ""}
-                """,
-                params,
+                f"SELECT COUNT(*) AS mesas, COALESCE(SUM(m.votos_emitidos),0) AS votos_emitidos FROM mesas_2021 m {where_m}",
+                params_m,
             ).fetchone()
         return {
             "vuelta": vuelta,
-            "nivel": col or "nacional",
+            "nivel": col or ("mesa_prefix" if mesa_prefix else "nacional"),
             "filtro": val,
+            "mesa_prefix": mesa_prefix,
             "mesas": int(totals["mesas"] or 0) if totals else 0,
             "votos_emitidos": int(totals["votos_emitidos"] or 0) if totals else 0,
             "top": [
