@@ -567,8 +567,6 @@ Las mesas 900K se agrupan en tres rangos de padrón. No existe ninguna mesa 900K
 | Mesa | Departamento | Provincia | Distrito | Electores | FP | JxP | Margen FP |
 |---|---|---|---|---:|---:|---:|---:|
 | [903476](https://onpe.ozamora.com/geo.php?mesa=903476) | Loreto | M. R. Castilla | Santa Rosa de Loreto | 142 | 113 | 0 | **100.0%** |
-| [903142](https://onpe.ozamora.com/geo.php?mesa=903142) | Lima | Huarochirí | S. J. de Tantaranche | 91 | 52 | 0 | **100.0%** |
-| [902491](https://onpe.ozamora.com/geo.php?mesa=902491) | Junín | Satipo | Mazamari | 151 | 55 | 0 | **100.0%** |
 | [903451](https://onpe.ozamora.com/geo.php?mesa=903451) | Loreto | M. R. Castilla | Yavarí | 283 | 147 | 2 | 98.7% |
 | [903547](https://onpe.ozamora.com/geo.php?mesa=903547) | Loreto | Loreto | Urarinas | 190 | 65 | 2 | 97.0% |
 | [903561](https://onpe.ozamora.com/geo.php?mesa=903561) | Loreto | Requena | Alto Tapiche | 72 | 30 | 1 | 96.8% |
@@ -577,44 +575,46 @@ Las mesas 900K se agrupan en tres rangos de padrón. No existe ninguna mesa 900K
 | [903961](https://onpe.ozamora.com/geo.php?mesa=903961) | Piura | Paita | Paita | 243 | 177 | 7 | 96.2% |
 | [903179](https://onpe.ozamora.com/geo.php?mesa=903179) | Lima | Oyón | Pachangara | 155 | 104 | 5 | 95.4% |
 | [903558](https://onpe.ozamora.com/geo.php?mesa=903558) | Loreto | Putumayo | Yaguas | 175 | 82 | 4 | 95.3% |
+| [903574](https://onpe.ozamora.com/geo.php?mesa=903574) | Loreto | Requena | Yaquerana | 132 | 39 | 2 | 95.1% |
 | [903965](https://onpe.ozamora.com/geo.php?mesa=903965) | Piura | Paita | Paita | 284 | 211 | 11 | 95.0% |
-| [903555](https://onpe.ozamora.com/geo.php?mesa=903555) | Loreto | Putumayo | Putumayo | 97 | 31 | 2 | 93.9% |
 | [903546](https://onpe.ozamora.com/geo.php?mesa=903546) | Loreto | Loreto | Urarinas | 191 | 62 | 4 | 93.9% |
+| [903555](https://onpe.ozamora.com/geo.php?mesa=903555) | Loreto | Putumayo | Putumayo | 97 | 31 | 2 | 93.9% |
 | [903962](https://onpe.ozamora.com/geo.php?mesa=903962) | Piura | Paita | Paita | 273 | 195 | 13 | 93.8% |
 | [903458](https://onpe.ozamora.com/geo.php?mesa=903458) | Loreto | M. R. Castilla | Yavarí | 260 | 59 | 4 | 93.7% |
 | [903530](https://onpe.ozamora.com/geo.php?mesa=903530) | Loreto | Loreto | Tigre | 222 | 111 | 8 | 93.3% |
 | [903964](https://onpe.ozamora.com/geo.php?mesa=903964) | Piura | Paita | Paita | 284 | 206 | 16 | 92.8% |
 | [903456](https://onpe.ozamora.com/geo.php?mesa=903456) | Loreto | M. R. Castilla | Yavarí | 260 | 71 | 6 | 92.2% |
 | [903963](https://onpe.ozamora.com/geo.php?mesa=903963) | Piura | Paita | Paita | 285 | 209 | 18 | 92.1% |
+| [903459](https://onpe.ozamora.com/geo.php?mesa=903459) | Loreto | M. R. Castilla | Yavarí | 260 | 57 | 5 | 91.9% |
 
-> Las mesas con mayor margen Keiko se concentran en **Loreto (Mariscal Ramón Castilla / Yavarí, Putumayo, Tigre)** y **Piura (Paita)**. El distrito de Yavarí tiene múltiples mesas 100K% Keiko, frontera con Brasil. Paita (Piura) muestra un cluster de 5 mesas con >92% Keiko. Ver acta en [onpe.ozamora.com/geo.php](https://onpe.ozamora.com/geo.php) (2V) | [onpe.ozamora.com/2026/geo.php](https://onpe.ozamora.com/2026/geo.php) (1V).
+> Las mesas con mayor margen Keiko se concentran en **Loreto (Mariscal Ramón Castilla / Yavarí, Putumayo, Tigre, Requena)** y **Piura (Paita)**. El distrito de Yavarí (frontera con Brasil) domina con 6 mesas en el top 20. Ver acta en [onpe.ozamora.com/geo.php](https://onpe.ozamora.com/geo.php) (2V) | [onpe.ozamora.com/2026/geo.php](https://onpe.ozamora.com/2026/geo.php) (1V).
 
 ### Top 20 mesas con mayor margen para Roberto Sánchez (JxP)
 
 | Mesa | Departamento | Provincia | Distrito | Electores | FP | JxP | Margen JxP |
 |---|---|---|---|---:|---:|---:|---:|
-| [904649](https://onpe.ozamora.com/geo.php?mesa=904649) | Ucayali | Atalaya | Tahuania | 194 | 0 | 71 | **100.0%** |
-| [904114](https://onpe.ozamora.com/geo.php?mesa=904114) | Puno | Carabaya | Ayapata | 98 | 0 | 73 | **100.0%** |
-| [903443](https://onpe.ozamora.com/geo.php?mesa=903443) | Loreto | Datem del Marañón | Pastaza | 135 | 0 | 88 | **100.0%** |
-| [903439](https://onpe.ozamora.com/geo.php?mesa=903439) | Loreto | Datem del Marañón | Pastaza | 203 | 0 | 80 | **100.0%** |
-| [903438](https://onpe.ozamora.com/geo.php?mesa=903438) | Loreto | Datem del Marañón | Pastaza | 203 | 0 | 67 | **100.0%** |
-| [903433](https://onpe.ozamora.com/geo.php?mesa=903433) | Loreto | Datem del Marañón | Pastaza | 162 | 0 | 78 | **100.0%** |
-| [903427](https://onpe.ozamora.com/geo.php?mesa=903427) | Loreto | Datem del Marañón | Morona | 197 | 0 | 52 | **100.0%** |
-| [903416](https://onpe.ozamora.com/geo.php?mesa=903416) | Loreto | Datem del Marañón | Manseriche | 229 | 0 | 157 | **100.0%** |
-| [903415](https://onpe.ozamora.com/geo.php?mesa=903415) | Loreto | Datem del Marañón | Manseriche | 230 | 0 | 133 | **100.0%** |
-| [903404](https://onpe.ozamora.com/geo.php?mesa=903404) | Loreto | Datem del Marañón | Cahuapanas | 214 | 0 | 149 | **100.0%** |
-| [903398](https://onpe.ozamora.com/geo.php?mesa=903398) | Loreto | Datem del Marañón | Cahuapanas | 267 | 0 | 122 | **100.0%** |
-| [903389](https://onpe.ozamora.com/geo.php?mesa=903389) | Loreto | Datem del Marañón | Andoas | 220 | 0 | 96 | **100.0%** |
-| [901615](https://onpe.ozamora.com/geo.php?mesa=901615) | Cajamarca | San Ignacio | Tabaconas | 279 | 0 | 193 | **100.0%** |
 | [901555](https://onpe.ozamora.com/geo.php?mesa=901555) | Cajamarca | San Ignacio | Huarango | 298 | 0 | 205 | **100.0%** |
-| [901523](https://onpe.ozamora.com/geo.php?mesa=901523) | Cajamarca | Jaén | Sallique | 248 | 0 | 148 | **100.0%** |
-| [900838](https://onpe.ozamora.com/geo.php?mesa=900838) | Arequipa | Condesuyos | Cayarani | 236 | 0 | 111 | **100.0%** |
 | [900100](https://onpe.ozamora.com/geo.php?mesa=900100) | Amazonas | Condorcanqui | El Cenepa | 248 | 0 | 194 | **100.0%** |
-| [900097](https://onpe.ozamora.com/geo.php?mesa=900097) | Amazonas | Condorcanqui | El Cenepa | 164 | 0 | 80 | **100.0%** |
-| [900096](https://onpe.ozamora.com/geo.php?mesa=900096) | Amazonas | Condorcanqui | El Cenepa | 161 | 0 | 90 | **100.0%** |
+| [901615](https://onpe.ozamora.com/geo.php?mesa=901615) | Cajamarca | San Ignacio | Tabaconas | 279 | 0 | 193 | **100.0%** |
 | [900089](https://onpe.ozamora.com/geo.php?mesa=900089) | Amazonas | Condorcanqui | El Cenepa | 246 | 0 | 166 | **100.0%** |
+| [903416](https://onpe.ozamora.com/geo.php?mesa=903416) | Loreto | Datem del Marañón | Manseriche | 229 | 0 | 157 | **100.0%** |
+| [900047](https://onpe.ozamora.com/geo.php?mesa=900047) | Amazonas | Bagua | Imaza | 218 | 0 | 155 | **100.0%** |
+| [903404](https://onpe.ozamora.com/geo.php?mesa=903404) | Loreto | Datem del Marañón | Cahuapanas | 214 | 0 | 149 | **100.0%** |
+| [900049](https://onpe.ozamora.com/geo.php?mesa=900049) | Amazonas | Bagua | Imaza | 203 | 0 | 148 | **100.0%** |
+| [901523](https://onpe.ozamora.com/geo.php?mesa=901523) | Cajamarca | Jaén | Sallique | 248 | 0 | 148 | **100.0%** |
+| [903415](https://onpe.ozamora.com/geo.php?mesa=903415) | Loreto | Datem del Marañón | Manseriche | 230 | 0 | 133 | **100.0%** |
+| [900070](https://onpe.ozamora.com/geo.php?mesa=900070) | Amazonas | Condorcanqui | Nieva | 191 | 0 | 126 | **100.0%** |
+| [903398](https://onpe.ozamora.com/geo.php?mesa=903398) | Loreto | Datem del Marañón | Cahuapanas | 267 | 0 | 122 | **100.0%** |
+| [900028](https://onpe.ozamora.com/geo.php?mesa=900028) | Amazonas | Bagua | Imaza | 216 | 0 | 119 | **100.0%** |
+| [900838](https://onpe.ozamora.com/geo.php?mesa=900838) | Arequipa | Condesuyos | Cayarani | 236 | 0 | 111 | **100.0%** |
+| [900023](https://onpe.ozamora.com/geo.php?mesa=900023) | Amazonas | Bagua | Imaza | 196 | 0 | 107 | **100.0%** |
+| [900048](https://onpe.ozamora.com/geo.php?mesa=900048) | Amazonas | Bagua | Imaza | 146 | 0 | 104 | **100.0%** |
+| [900085](https://onpe.ozamora.com/geo.php?mesa=900085) | Amazonas | Condorcanqui | Río Santiago | 140 | 0 | 102 | **100.0%** |
+| [903389](https://onpe.ozamora.com/geo.php?mesa=903389) | Loreto | Datem del Marañón | Andoas | 220 | 0 | 96 | **100.0%** |
+| [900096](https://onpe.ozamora.com/geo.php?mesa=900096) | Amazonas | Condorcanqui | El Cenepa | 161 | 0 | 90 | **100.0%** |
+| [903443](https://onpe.ozamora.com/geo.php?mesa=903443) | Loreto | Datem del Marañón | Pastaza | 135 | 0 | 88 | **100.0%** |
 
-> Las mesas con mayor margen Sánchez se concentran en **Loreto (Datem del Marañón — Pastaza, Morona, Manseriche, Cahuapanas, Andoas)**, **Cajamarca (San Ignacio y Jaén)**, **Amazonas (Condorcanqui / El Cenepa)**, **Arequipa (Condesuyos / Cayarani)** y **Ucayali (Atalaya)**. El distrito de Datem del Marañón es una zona de pueblos indígenas amazónicos donde FP obtuvo literalmente 0 votos en 12 mesas. Ver acta en [onpe.ozamora.com/geo.php](https://onpe.ozamora.com/geo.php) (2V) | [onpe.ozamora.com/2026/geo.php](https://onpe.ozamora.com/2026/geo.php) (1V).
+> Las mesas con mayor margen Sánchez se concentran en **Amazonas (Condorcanqui/El Cenepa, Bagua/Imaza, Condorcanqui/Nieva y Río Santiago)**, **Loreto (Datem del Marañón — Manseriche, Cahuapanas, Andoas, Pastaza)** y **Cajamarca (San Ignacio, Jaén)**. Todos los 20 tienen 100% JxP (FP=0). Ver acta en [onpe.ozamora.com/geo.php](https://onpe.ozamora.com/geo.php) (2V) | [onpe.ozamora.com/2026/geo.php](https://onpe.ozamora.com/2026/geo.php) (1V).
 
 ---
 
