@@ -38,3 +38,4 @@ htmlcov/
 
 # Local ad-hoc analysis outputs (regenerable via scripts/_stats_*.py)
 stats_*_output.txt
+APPLY_CLI_FIX_PLAN.md
