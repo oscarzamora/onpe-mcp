@@ -193,6 +193,35 @@ cd ../onpe-scraper-2026-2 && git pull   # nuevos datos del scraper
 onpe_sv_refresh()                       # UPSERT idempotente en SQLite
 ```
 
+### Flujo recomendado en frío (pull + hydrate + denorm + tests)
+
+Para dejar el entorno reproducible y con la suite completa en verde, usa esta secuencia end-to-end:
+
+```bash
+# 1) Pull de repos
+git pull --ff-only
+git -C ../onpescraper pull --ff-only
+git -C ../onpe-scraper-2026-2 pull --ff-only
+git -C ../peruvoto2021 pull --ff-only
+
+# 2) Hidratación runtime (1V + 2021 + 2V)
+python -c "import json; from onpe_mcp.server import onpe_bootstrap_snapshot,onpe_2021_bootstrap,onpe_sv_bootstrap; print(json.dumps(onpe_bootstrap_snapshot(force=True), ensure_ascii=False)); print(json.dumps(onpe_2021_bootstrap(force=True), ensure_ascii=False)); print(json.dumps(onpe_sv_bootstrap(force=True), ensure_ascii=False))"
+
+# 3) Snapshot seguro para build_denorm
+python -c "import sqlite3; s=sqlite3.connect('data/onpe_denorm.db'); d=sqlite3.connect('data/source_snapshot.db'); s.backup(d); d.close(); s.close(); print('SNAPSHOT_OK')"
+
+# 4) Materializar denorm BI
+python scripts/build_denorm.py --src data/source_snapshot.db --dest data/onpe_denorm.db
+
+# 5) Rehidratar runtime (obligatorio: build_denorm recrea la DB)
+python -c "import json; from onpe_mcp.server import onpe_bootstrap_snapshot,onpe_2021_bootstrap,onpe_sv_bootstrap; print(json.dumps(onpe_bootstrap_snapshot(force=True), ensure_ascii=False)); print(json.dumps(onpe_2021_bootstrap(force=True), ensure_ascii=False)); print(json.dumps(onpe_sv_bootstrap(force=True), ensure_ascii=False))"
+
+# 6) Tests
+python -m pytest tests -q --tb=short
+```
+
+> Nota: si `../onpe-scraper-2026-2` tiene cambios locales, resuélvelos antes de `git pull` para evitar bloqueos.
+
 ---
 
 ## 🏗️ Arquitectura de datos
