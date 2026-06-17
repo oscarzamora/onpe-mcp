@@ -7,6 +7,7 @@ Se extendió el toolset MCP con tres tools orientadas a consumo analítico contr
 1. `db_query(query_spec, preset?)`
 2. `db_search(query, field, election_year, vuelta, limit)`
 3. `db_batch_execute(requests, stop_on_error)`
+4. `db_catalog()`
 
 Objetivo práctico: que agentes/consumidores usen una puerta analítica MCP read-only, en lugar de depender de SQL ad hoc o tablas físicas.
 
@@ -41,6 +42,15 @@ Objetivo práctico: que agentes/consumidores usen una puerta analítica MCP read
 - Límite de seguridad: máximo 50 requests por llamada.
 - Soporta `stop_on_error` para control operacional.
 - Aplica límites de seguridad por lote para evitar respuestas masivas.
+
+### `db_catalog`
+
+- Expone el contrato vigente para agentes:
+  - `schema_version`
+  - datasets y columnas públicas
+  - presets disponibles
+  - alias de compatibilidad legacy→canónico
+- Permite forzar disciplina MCP-first sin depender de memoria del agente.
 
 ### Mapeo de campos legacy (guía de compatibilidad)
 
@@ -80,6 +90,7 @@ Esto permite replay y comparación entre ejecuciones.
 - `db_query` es la puerta recomendada para nuevos flujos analíticos.
 - `db_search` se usa para resolver entidades antes de consultar.
 - `db_batch_execute` queda para orquestación controlada de múltiples consultas.
+- `db_catalog` debe ser la primera referencia para resolver contrato/campos/presets.
 
 ### Tool guidance (copiable para prompt de agentes)
 

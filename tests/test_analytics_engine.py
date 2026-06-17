@@ -195,3 +195,61 @@ def test_query_rejects_malformed_where_entries(tmp_path: Path) -> None:
         assert False, "Expected ValueError for malformed where"
     except ValueError as exc:
         assert "where" in str(exc)
+
+
+def test_query_applies_legacy_field_alias_in_where(tmp_path: Path) -> None:
+    db_path = tmp_path / "onpe_denorm.db"
+    _seed_denorm_like_db(db_path)
+    engine = AnalyticsEngine(db_path)
+
+    out = engine.query(
+        {
+            "dataset": "mesa",
+            "election_year": 2026,
+            "vuelta": 2,
+            "select": ["codigo_mesa", "codigo_estado_acta"],
+            "where": [{"field": "codigo_estado_acta", "op": "eq", "value": "C"}],
+            "include_special": True,
+            "count_only_contabilizadas": False,
+            "limit": 20,
+        }
+    )
+
+    assert out["returned"] == 2
+    aliases = out["field_aliases_applied"]
+    assert {"from": "codigo_estado_acta", "to": "estado_acta"} in aliases
+    assert out["query_echo"]["select"] == ["codigo_mesa", "estado_acta"]
+    assert out["query_echo"]["where"][0]["field"] == "estado_acta"
+
+
+def test_available_catalog_helpers_include_aliases_and_presets(tmp_path: Path) -> None:
+    db_path = tmp_path / "onpe_denorm.db"
+    _seed_denorm_like_db(db_path)
+    engine = AnalyticsEngine(db_path)
+
+    presets = engine.available_presets()
+    aliases = engine.available_field_aliases()
+    datasets = engine.available_datasets()
+
+    assert "900k_segunda_vuelta_resumen" in presets
+    assert aliases["codigo_estado_acta"] == "estado_acta"
+    assert "mesa" in datasets
+    assert "mesa_num" not in datasets["mesa"]
+
+
+def test_query_deduplicates_select_after_aliasing(tmp_path: Path) -> None:
+    db_path = tmp_path / "onpe_denorm.db"
+    _seed_denorm_like_db(db_path)
+    engine = AnalyticsEngine(db_path)
+
+    out = engine.query(
+        {
+            "dataset": "mesa",
+            "election_year": 2026,
+            "vuelta": 2,
+            "select": ["codigo_mesa", "codigo_estado_acta", "estado_acta"],
+            "limit": 5,
+        }
+    )
+
+    assert out["query_echo"]["select"] == ["codigo_mesa", "estado_acta"]

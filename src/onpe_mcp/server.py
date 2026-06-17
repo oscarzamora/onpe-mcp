@@ -22,7 +22,7 @@ from .gateway import GatewayError, OnpeScraperGateway
 from .knowledge_base import get_context_notes, get_fallback_qualitative, data_tier_label
 from .onpe_api import OnpeApiClient, OnpeApiError
 from .storage import DataStore
-from .analytics import AnalyticsEngine
+from .analytics import AnalyticsEngine, SCHEMA_VERSION
 from .utils import (
     configure_logging,
     error_response,
@@ -2687,7 +2687,7 @@ def _build_db_query_meta(result: dict[str, Any]) -> dict[str, Any]:
         pass
     return {
         "query_id": str(uuid.uuid4()),
-        "schema_version": result.get("schema_version") or "1.0",
+        "schema_version": result.get("schema_version") or SCHEMA_VERSION,
         "snapshot_id": snapshot_id,
         "normalized_request_hash": f"sha256:{sha256(canonical.encode('utf-8')).hexdigest()}",
         "rowcount": int(result.get("returned") or 0),
@@ -2718,6 +2718,20 @@ def _execute_db_query_payload(payload: dict[str, Any], *, event_name: str = "db_
     return result
 
 
+def _coerce_bool(value: Any, *, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "y", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "n", "off"}:
+            return False
+    return bool(value)
+
+
 @mcp.tool()
 def onpe_query(query_spec: dict[str, Any]) -> dict[str, Any]:
     """Motor analítico estructurado (fase inicial): select + where + order + paginación.
@@ -2726,12 +2740,20 @@ def onpe_query(query_spec: dict[str, Any]) -> dict[str, Any]:
     """
     started_ms = now_ms()
     try:
-        result = analytics_engine.query(query_spec or {})
+        result = _execute_db_query_payload(dict(query_spec or {}), event_name="onpe_query_legacy")
         store.append_raw_event(
             "onpe_query",
             {"query_spec": query_spec, "total": result.get("total"), "returned": result.get("returned")},
         )
-        return ok_response(result, started_ms=started_ms, meta={"source": "sqlite_denorm"})
+        return ok_response(
+            result,
+            started_ms=started_ms,
+            meta={
+                "source": "sqlite_denorm",
+                "deprecated": True,
+                "prefer_tool": "db_query",
+            },
+        )
     except ValueError as exc:
         return error_response(str(exc), started_ms=started_ms, code="VALIDATION_ERROR")
     except Exception as exc:
@@ -2798,6 +2820,25 @@ def db_search(
         return error_response(str(exc), started_ms=started_ms, code="VALIDATION_ERROR")
     except Exception as exc:
         logger.exception("Error en db_search")
+        return error_response(str(exc), started_ms=started_ms)
+
+
+@mcp.tool()
+def db_catalog() -> dict[str, Any]:
+    """Publica datasets, presets, aliases y versión del contrato de db_query."""
+    started_ms = now_ms()
+    try:
+        data = {
+            "schema_version": SCHEMA_VERSION,
+            "datasets": analytics_engine.available_datasets(),
+            "presets": analytics_engine.available_presets(),
+            "field_aliases": analytics_engine.available_field_aliases(),
+            "preferred_tools": ["db_search", "db_query", "db_batch_execute"],
+            "deprecated_tools": ["onpe_query", "onpe_filter_mesas"],
+        }
+        return ok_response(data, started_ms=started_ms, meta={"source": "sqlite_denorm"})
+    except Exception as exc:
+        logger.exception("Error en db_catalog")
         return error_response(str(exc), started_ms=started_ms)
 
 
@@ -2898,7 +2939,7 @@ def onpe_filter_mesas(
             partido=str(partido),
             votos_op=str(votos_op),
             votos_value=votos_value,
-            solo_escrutadas=bool(solo_escrutadas),
+            solo_escrutadas=_coerce_bool(solo_escrutadas, default=True),
             mesa_prefix=normalized_prefix,
             limit=int(limit),
             offset=int(offset),
@@ -2916,7 +2957,15 @@ def onpe_filter_mesas(
                 "returned": result.get("returned"),
             },
         )
-        return ok_response(result, started_ms=started_ms, meta={"source": "sqlite_denorm"})
+        return ok_response(
+            result,
+            started_ms=started_ms,
+            meta={
+                "source": "sqlite_denorm",
+                "deprecated": True,
+                "prefer_tool": "db_query",
+            },
+        )
     except ValueError as exc:
         return error_response(str(exc), started_ms=started_ms, code="VALIDATION_ERROR")
     except Exception as exc:

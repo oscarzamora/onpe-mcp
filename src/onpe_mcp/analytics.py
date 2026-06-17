@@ -96,6 +96,13 @@ _PRESET_QUERIES: dict[str, dict[str, Any]] = {
     },
 }
 
+_FIELD_ALIASES = {
+    "codigo_estado_acta": "estado_acta",
+    "contabilizada": "is_contabilizada",
+    "es_contabilizada": "is_contabilizada",
+}
+
+
 def _parse_bool(value: Any, *, field_name: str, default: bool) -> bool:
     if value is None:
         return default
@@ -281,13 +288,71 @@ class AnalyticsEngine:
         return merged
 
     def available_datasets(self) -> dict[str, list[str]]:
-        return {name: sorted(cols) for name, cols in _DATASET_COLUMNS.items()}
+        out: dict[str, list[str]] = {}
+        for dataset, table in _DATASET_TABLE.items():
+            out[dataset] = sorted(self._allowed_columns(dataset, table))
+        return out
 
     def available_presets(self) -> list[str]:
         return sorted(_PRESET_QUERIES.keys())
 
+    def available_field_aliases(self) -> dict[str, str]:
+        return dict(_FIELD_ALIASES)
+
+    def _apply_field_aliases(self, payload: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, str]]]:
+        normalized = copy.deepcopy(payload or {})
+        applied: list[dict[str, str]] = []
+
+        def _alias(field_name: str) -> str:
+            canonical = _FIELD_ALIASES.get(field_name, field_name)
+            if canonical != field_name:
+                applied.append({"from": field_name, "to": canonical})
+            return canonical
+
+        raw_select = normalized.get("select")
+        if isinstance(raw_select, list):
+            select_alias = [_alias(str(c).strip()) for c in raw_select]
+            dedup_select: list[str] = []
+            seen_select: set[str] = set()
+            for col in select_alias:
+                if col in seen_select:
+                    continue
+                seen_select.add(col)
+                dedup_select.append(col)
+            normalized["select"] = dedup_select
+
+        raw_where = normalized.get("where")
+        if isinstance(raw_where, list):
+            new_where: list[dict[str, Any]] = []
+            for cond in raw_where:
+                if isinstance(cond, dict):
+                    cond_norm = dict(cond)
+                    cond_norm["field"] = _alias(str(cond_norm.get("field", "")).strip())
+                    new_where.append(cond_norm)
+                else:
+                    new_where.append(cond)
+            normalized["where"] = new_where
+
+        raw_order = normalized.get("order_by")
+        if isinstance(raw_order, list):
+            new_order: list[dict[str, Any]] = []
+            for item in raw_order:
+                if isinstance(item, dict):
+                    item_norm = dict(item)
+                    item_norm["field"] = _alias(str(item_norm.get("field", "")).strip())
+                    new_order.append(item_norm)
+                else:
+                    new_order.append(item)
+            normalized["order_by"] = new_order
+
+        dedup: dict[tuple[str, str], dict[str, str]] = {}
+        for item in applied:
+            dedup[(item["from"], item["to"])] = item
+        return normalized, list(dedup.values())
+
     def query(self, payload: dict[str, Any]) -> dict[str, Any]:
         effective_payload = self.apply_preset(payload or {})
+        effective_payload, field_aliases_applied = self._apply_field_aliases(effective_payload)
         spec = QuerySpec.from_dict(effective_payload)
         table = _DATASET_TABLE[spec.dataset]
         allowed = self._allowed_columns(spec.dataset, table)
@@ -342,6 +407,7 @@ class AnalyticsEngine:
             "sql_explain": rows_sql,
             "data_tier": "tier_1_denorm",
             "schema_version": SCHEMA_VERSION,
+            "field_aliases_applied": field_aliases_applied,
         }
 
     def search_entities(

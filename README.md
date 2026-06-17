@@ -309,6 +309,7 @@ python scripts/benchmark_denorm.py            # corre 26 queries baseline legacy
 | `db_query` | Puerta analítica read-only con request estructurado, presets y metadatos de trazabilidad (`query_id`, `snapshot_id`, `request_hash`). |
 | `db_search` | Descubre entidades canónicas (geo/partido/candidato) para alimentar `db_query` sin depender de SQL ad hoc. |
 | `db_batch_execute` | Ejecuta lote de consultas `db_query` con límites y `stop_on_error` para orquestación controlada. |
+| `db_catalog` | Publica contrato vigente (`schema_version`, datasets, presets y alias legacy→canónico) para evitar consultas fuera de contrato. |
 
 **Disciplina recomendada para agentes (MCP-only):**
 
@@ -323,6 +324,7 @@ python scripts/benchmark_denorm.py            # corre 26 queries baseline legacy
 - `contabilizada` / `es_contabilizada` → `is_contabilizada`
 
 > `onpe_query` y `onpe_filter_mesas` se mantienen por compatibilidad. Para nuevos flujos, preferir `db_query`.
+> Flujo MCP-first recomendado: `db_catalog` → `db_search` (opcional) → `db_query`.
 
 ### Bootstrap y sincronización
 
