@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import difflib
+import json
 import logging
+import uuid
 from typing import Any
 import re
 import unicodedata
+from hashlib import sha256
 from pathlib import Path
 
 try:
@@ -2668,6 +2671,53 @@ def onpe_comparacion_geo_cross_year(
         return error_response(str(exc), started_ms=started_ms)
 
 
+def _build_db_query_meta(result: dict[str, Any]) -> dict[str, Any]:
+    canonical = json.dumps(
+        result.get("query_echo", {}),
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    db_path = Path(settings.data_dir) / "onpe_denorm.db"
+    snapshot_id = "sqlite:missing"
+    try:
+        st = db_path.stat()
+        snapshot_id = f"sqlite:size:{st.st_size}:mtime_ns:{st.st_mtime_ns}"
+    except OSError:
+        pass
+    return {
+        "query_id": str(uuid.uuid4()),
+        "schema_version": result.get("schema_version") or "1.0",
+        "snapshot_id": snapshot_id,
+        "normalized_request_hash": f"sha256:{sha256(canonical.encode('utf-8')).hexdigest()}",
+        "rowcount": int(result.get("returned") or 0),
+        "audit_logged": False,
+    }
+
+
+def _execute_db_query_payload(payload: dict[str, Any], *, event_name: str = "db_query") -> dict[str, Any]:
+    result = analytics_engine.query(payload)
+    query_meta = _build_db_query_meta(result)
+    try:
+        store.append_raw_event(
+            event_name,
+            {
+                "query_id": query_meta["query_id"],
+                "schema_version": query_meta["schema_version"],
+                "snapshot_id": query_meta["snapshot_id"],
+                "request": payload,
+                "request_hash": query_meta["normalized_request_hash"],
+                "rowcount": query_meta["rowcount"],
+                "status": "ok",
+            },
+        )
+        query_meta["audit_logged"] = True
+    except Exception:
+        logger.exception("Error registrando auditoría de %s", event_name)
+    result["query_meta"] = query_meta
+    return result
+
+
 @mcp.tool()
 def onpe_query(query_spec: dict[str, Any]) -> dict[str, Any]:
     """Motor analítico estructurado (fase inicial): select + where + order + paginación.
@@ -2686,6 +2736,141 @@ def onpe_query(query_spec: dict[str, Any]) -> dict[str, Any]:
         return error_response(str(exc), started_ms=started_ms, code="VALIDATION_ERROR")
     except Exception as exc:
         logger.exception("Error en onpe_query")
+        return error_response(str(exc), started_ms=started_ms)
+
+
+@mcp.tool()
+def db_query(query_spec: dict[str, Any], preset: str | None = None) -> dict[str, Any]:
+    """Consulta analítica controlada read-only con contrato estable y metadatos de auditoría."""
+    started_ms = now_ms()
+    payload = dict(query_spec or {})
+    if preset:
+        payload["preset"] = str(preset).strip()
+    try:
+        result = _execute_db_query_payload(payload, event_name="db_query")
+        query_meta = result["query_meta"]
+        return ok_response(
+            result,
+            started_ms=started_ms,
+            meta={
+                "source": "sqlite_denorm",
+                "query_id": query_meta["query_id"],
+                "schema_version": query_meta["schema_version"],
+            },
+        )
+    except ValueError as exc:
+        return error_response(str(exc), started_ms=started_ms, code="VALIDATION_ERROR")
+    except Exception as exc:
+        logger.exception("Error en db_query")
+        return error_response(str(exc), started_ms=started_ms)
+
+
+@mcp.tool()
+def db_search(
+    query: str,
+    field: str = "any",
+    election_year: int = 2026,
+    vuelta: int = 2,
+    limit: int = 20,
+) -> dict[str, Any]:
+    """Descubre entidades canónicas (geo, partido, candidato) para usar en db_query."""
+    started_ms = now_ms()
+    try:
+        result = analytics_engine.search_entities(
+            query=str(query),
+            field=str(field),
+            election_year=int(election_year),
+            vuelta=int(vuelta),
+            limit=int(limit),
+        )
+        store.append_raw_event(
+            "db_search",
+            {
+                "query": query,
+                "field": field,
+                "election_year": election_year,
+                "vuelta": vuelta,
+                "returned": result.get("returned"),
+            },
+        )
+        return ok_response(result, started_ms=started_ms, meta={"source": "sqlite_denorm"})
+    except ValueError as exc:
+        return error_response(str(exc), started_ms=started_ms, code="VALIDATION_ERROR")
+    except Exception as exc:
+        logger.exception("Error en db_search")
+        return error_response(str(exc), started_ms=started_ms)
+
+
+@mcp.tool()
+def db_batch_execute(requests: list[dict[str, Any]], stop_on_error: bool = True) -> dict[str, Any]:
+    """Ejecuta un batch de consultas db_query en modo read-only controlado."""
+    started_ms = now_ms()
+    try:
+        if not isinstance(requests, list) or not requests:
+            raise ValueError("requests debe ser una lista no vacía")
+        if len(requests) > 50:
+            raise ValueError("requests supera el máximo permitido (50)")
+        max_limit_per_query = 2_000
+        max_total_rows = 20_000
+        items: list[dict[str, Any]] = []
+        errors = 0
+        total_rows_returned = 0
+        for i, request in enumerate(requests):
+            payload = dict(request or {})
+            req_limit = payload.get("limit")
+            if req_limit is not None and int(req_limit) > max_limit_per_query:
+                raise ValueError(
+                    f"limit por query excede máximo de batch ({max_limit_per_query}) en index={i}"
+                )
+            try:
+                result = _execute_db_query_payload(payload, event_name="db_batch_query")
+                total_rows_returned += int(result.get("returned") or 0)
+                if total_rows_returned > max_total_rows:
+                    raise ValueError(
+                        f"batch excede máximo de filas retornadas ({max_total_rows})"
+                    )
+                items.append(
+                    {
+                        "index": i,
+                        "ok": True,
+                        "data": result,
+                        "errors": [],
+                    }
+                )
+            except Exception as exc:
+                errors += 1
+                items.append(
+                    {
+                        "index": i,
+                        "ok": False,
+                        "data": None,
+                        "errors": [{"code": "QUERY_ERROR", "message": str(exc)}],
+                    }
+                )
+                if stop_on_error:
+                    break
+        summary = {
+            "total_requests": len(requests),
+            "executed": len(items),
+            "failed": errors,
+            "stop_on_error": bool(stop_on_error),
+            "total_rows_returned": total_rows_returned,
+            "results": items,
+        }
+        store.append_raw_event(
+            "db_batch_execute",
+            {
+                "total_requests": len(requests),
+                "executed": len(items),
+                "failed": errors,
+                "stop_on_error": bool(stop_on_error),
+            },
+        )
+        return ok_response(summary, started_ms=started_ms, meta={"source": "sqlite_denorm"})
+    except ValueError as exc:
+        return error_response(str(exc), started_ms=started_ms, code="VALIDATION_ERROR")
+    except Exception as exc:
+        logger.exception("Error en db_batch_execute")
         return error_response(str(exc), started_ms=started_ms)
 
 

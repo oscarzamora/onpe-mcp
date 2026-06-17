@@ -302,6 +302,14 @@ python scripts/benchmark_denorm.py            # corre 26 queries baseline legacy
 | `onpe_get_mesas_batch` | Hasta 200 mesas 2026 1V en paralelo desde cache/local DB |
 | `onpe_health` | Estado del servidor, DB 2026/2021 y cobertura de hidratación |
 
+### Analítica controlada (`db_*`)
+
+| Tool | Descripción |
+|------|-------------|
+| `db_query` | Puerta analítica read-only con request estructurado, presets y metadatos de trazabilidad (`query_id`, `snapshot_id`, `request_hash`). |
+| `db_search` | Descubre entidades canónicas (geo/partido/candidato) para alimentar `db_query` sin depender de SQL ad hoc. |
+| `db_batch_execute` | Ejecuta lote de consultas `db_query` con límites y `stop_on_error` para orquestación controlada. |
+
 ### Bootstrap y sincronización
 
 | Tool | Descripción |

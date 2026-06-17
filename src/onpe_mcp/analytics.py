@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import copy
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+SCHEMA_VERSION = "1.0"
 
 
 _DATASET_TABLE = {
@@ -23,6 +26,88 @@ _OP_SQL = {
     "gte": ">=",
     "like": "LIKE",
 }
+
+_DATASET_COLUMNS = {
+    "mesa": {
+        "election_year", "vuelta", "codigo_mesa", "ubigeo",
+        "cod_provincia", "cod_departamento", "ambito",
+        "departamento", "provincia", "distrito",
+        "continente", "pais", "ciudad",
+        "partido_id", "nombre_partido", "candidato",
+        "es_especial", "votos", "electores_habiles",
+        "votos_emitidos", "votos_validos", "blancos", "nulos",
+        "impugnados", "estado_acta", "is_contabilizada", "mesa_num",
+    },
+    "ubigeo": {
+        "election_year", "vuelta", "ubigeo", "departamento", "provincia", "distrito",
+        "continente", "pais", "ciudad", "partido_id", "nombre_partido", "candidato",
+        "es_especial", "votos", "electores_habiles", "votos_emitidos", "votos_validos",
+        "blancos", "nulos", "impugnados", "pct_partido", "is_contabilizada", "mesas",
+    },
+    "provincia": {
+        "election_year", "vuelta", "cod_departamento", "cod_provincia", "departamento",
+        "provincia", "partido_id", "nombre_partido", "candidato", "es_especial", "votos",
+        "electores_habiles", "votos_emitidos", "votos_validos", "blancos", "nulos",
+        "impugnados", "pct_partido", "is_contabilizada", "mesas",
+    },
+    "departamento": {
+        "election_year", "vuelta", "cod_departamento", "departamento", "partido_id",
+        "nombre_partido", "candidato", "es_especial", "votos", "electores_habiles",
+        "votos_emitidos", "votos_validos", "blancos", "nulos", "impugnados",
+        "pct_partido", "is_contabilizada", "mesas",
+    },
+    "nacional": {
+        "election_year", "vuelta", "partido_id", "nombre_partido", "candidato",
+        "es_especial", "votos", "electores_habiles", "votos_emitidos", "votos_validos",
+        "blancos", "nulos", "impugnados", "pct_partido", "is_contabilizada", "mesas",
+    },
+}
+
+_PRESET_QUERIES: dict[str, dict[str, Any]] = {
+    "900k_segunda_vuelta_resumen": {
+        "dataset": "mesa",
+        "election_year": 2026,
+        "vuelta": 2,
+        "select": [
+            "codigo_mesa", "departamento", "provincia", "distrito",
+            "partido_id", "nombre_partido", "candidato",
+            "votos", "votos_validos", "is_contabilizada",
+        ],
+        "where": [{"field": "codigo_mesa", "op": "like", "value": "9%"}],
+        "order_by": [{"field": "votos_validos", "dir": "desc"}],
+        "limit": 500,
+        "offset": 0,
+        "include_special": False,
+        "count_only_contabilizadas": True,
+    },
+    "audit_estado_E_vs_C": {
+        "dataset": "mesa",
+        "election_year": 2026,
+        "vuelta": 2,
+        "select": [
+            "codigo_mesa", "departamento", "provincia", "distrito",
+            "estado_acta", "is_contabilizada", "votos_emitidos", "votos_validos",
+        ],
+        "order_by": [{"field": "codigo_mesa", "dir": "asc"}],
+        "limit": 1000,
+        "offset": 0,
+        "include_special": True,
+        "count_only_contabilizadas": False,
+    },
+}
+
+def _parse_bool(value: Any, *, field_name: str, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "y", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "n", "off"}:
+            return False
+    raise ValueError(f"{field_name} debe ser booleano")
 
 
 @dataclass
@@ -58,15 +143,27 @@ class QuerySpec:
         where = payload.get("where", []) or []
         if not isinstance(where, list):
             raise ValueError("where debe ser una lista")
+        if any(not isinstance(cond, dict) for cond in where):
+            raise ValueError("cada elemento de where debe ser un objeto")
 
         order_by = payload.get("order_by", []) or []
         if not isinstance(order_by, list):
             raise ValueError("order_by debe ser una lista")
+        if any(not isinstance(item, dict) for item in order_by):
+            raise ValueError("cada elemento de order_by debe ser un objeto")
 
         limit = max(1, min(int(payload.get("limit", 500)), 50_000))
         offset = max(0, int(payload.get("offset", 0)))
-        include_special = bool(payload.get("include_special", False))
-        count_only_contabilizadas = bool(payload.get("count_only_contabilizadas", True))
+        include_special = _parse_bool(
+            payload.get("include_special"),
+            field_name="include_special",
+            default=False,
+        )
+        count_only_contabilizadas = _parse_bool(
+            payload.get("count_only_contabilizadas"),
+            field_name="count_only_contabilizadas",
+            default=True,
+        )
 
         unsupported = [k for k in ("group_by", "having", "compare") if payload.get(k)]
         if unsupported:
@@ -111,18 +208,23 @@ class AnalyticsEngine:
         self._table_columns_cache[table] = cols
         return cols
 
-    def _validate_columns(self, table: str, cols: list[str]) -> None:
-        allowed = self._table_columns(table)
+    def _allowed_columns(self, dataset: str, table: str) -> set[str]:
+        physical = self._table_columns(table)
+        public = _DATASET_COLUMNS.get(dataset)
+        if not public:
+            return physical
+        return set(public) & physical
+
+    def _validate_columns(self, allowed: set[str], cols: list[str], table: str) -> None:
         invalid = [c for c in cols if c not in allowed]
         if invalid:
             raise ValueError(f"columnas no permitidas para {table}: {invalid}")
 
     def _compile_where(
         self,
-        table: str,
+        allowed: set[str],
         spec: QuerySpec,
     ) -> tuple[str, list[Any]]:
-        allowed = self._table_columns(table)
         parts = ["election_year = ?", "vuelta = ?"]
         params: list[Any] = [spec.election_year, spec.vuelta]
 
@@ -163,12 +265,35 @@ class AnalyticsEngine:
 
         return " AND ".join(parts), params
 
-    def query(self, payload: dict[str, Any]) -> dict[str, Any]:
-        spec = QuerySpec.from_dict(payload)
-        table = _DATASET_TABLE[spec.dataset]
+    def apply_preset(self, payload: dict[str, Any]) -> dict[str, Any]:
+        preset_name = str(payload.get("preset", "") or "").strip()
+        if not preset_name:
+            return payload
+        preset_query = _PRESET_QUERIES.get(preset_name)
+        if preset_query is None:
+            raise ValueError(f"preset no soportado: {preset_name}")
+        merged = copy.deepcopy(preset_query)
+        for key, value in payload.items():
+            if key == "preset":
+                continue
+            merged[key] = value
+        merged["preset"] = preset_name
+        return merged
 
-        self._validate_columns(table, spec.select)
-        where_sql, params = self._compile_where(table, spec)
+    def available_datasets(self) -> dict[str, list[str]]:
+        return {name: sorted(cols) for name, cols in _DATASET_COLUMNS.items()}
+
+    def available_presets(self) -> list[str]:
+        return sorted(_PRESET_QUERIES.keys())
+
+    def query(self, payload: dict[str, Any]) -> dict[str, Any]:
+        effective_payload = self.apply_preset(payload or {})
+        spec = QuerySpec.from_dict(effective_payload)
+        table = _DATASET_TABLE[spec.dataset]
+        allowed = self._allowed_columns(spec.dataset, table)
+
+        self._validate_columns(allowed, spec.select, table)
+        where_sql, params = self._compile_where(allowed, spec)
 
         order_sql = ""
         if spec.order_by:
@@ -176,7 +301,7 @@ class AnalyticsEngine:
             for it in spec.order_by:
                 field = str(it.get("field", "")).strip()
                 direction = str(it.get("dir", "asc")).strip().lower()
-                if field not in self._table_columns(table):
+                if field not in allowed:
                     raise ValueError(f"order_by.field no permitido: {field}")
                 if direction not in ("asc", "desc"):
                     raise ValueError(f"order_by.dir inválido: {direction}")
@@ -212,10 +337,79 @@ class AnalyticsEngine:
                 "order_by": spec.order_by,
                 "include_special": spec.include_special,
                 "count_only_contabilizadas": spec.count_only_contabilizadas,
+                "preset": effective_payload.get("preset"),
             },
             "sql_explain": rows_sql,
             "data_tier": "tier_1_denorm",
+            "schema_version": SCHEMA_VERSION,
         }
+
+    def search_entities(
+        self,
+        *,
+        query: str,
+        field: str = "any",
+        election_year: int = 2026,
+        vuelta: int = 2,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        term = str(query or "").strip()
+        if len(term) < 2:
+            raise ValueError("query debe tener al menos 2 caracteres")
+        field_norm = str(field or "any").strip().lower()
+        allowed_fields = {"any", "departamento", "provincia", "distrito", "pais", "ciudad", "partido", "candidato"}
+        if field_norm not in allowed_fields:
+            raise ValueError(f"field inválido: {field}")
+        limit_n = max(1, min(int(limit), 100))
+        target_types = (
+            [field_norm]
+            if field_norm != "any"
+            else ["departamento", "provincia", "distrito", "pais", "ciudad", "partido", "candidato"]
+        )
+        type_column = {
+            "departamento": "departamento",
+            "provincia": "provincia",
+            "distrito": "distrito",
+            "pais": "pais",
+            "ciudad": "ciudad",
+            "partido": "nombre_partido",
+            "candidato": "candidato",
+        }
+        matches: list[dict[str, Any]] = []
+        seen: set[tuple[str, str]] = set()
+        per_type_limit = max(1, min(25, limit_n))
+        with self._connect() as conn:
+            for entity_type in target_types:
+                col = type_column[entity_type]
+                sql = f"""
+                    SELECT DISTINCT {col} AS value
+                    FROM fact_votos_mesa
+                    WHERE election_year = ?
+                      AND vuelta = ?
+                      AND COALESCE({col}, '') != ''
+                      AND UPPER({col}) LIKE UPPER(?)
+                    ORDER BY value
+                    LIMIT ?
+                """
+                rows = conn.execute(sql, (int(election_year), int(vuelta), f"%{term}%", per_type_limit)).fetchall()
+                for row in rows:
+                    value = str(row["value"] or "").strip()
+                    if not value:
+                        continue
+                    key = (entity_type, value.casefold())
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    matches.append(
+                        {
+                            "type": entity_type,
+                            "canonical_name": value,
+                            "usable_in": ["db_query", "onpe_query"],
+                        }
+                    )
+                    if len(matches) >= limit_n:
+                        return {"query": term, "matches": matches, "returned": len(matches)}
+        return {"query": term, "matches": matches, "returned": len(matches)}
 
     def filter_mesas(
         self,

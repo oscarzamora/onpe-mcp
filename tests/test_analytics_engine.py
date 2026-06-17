@@ -122,3 +122,76 @@ def test_query_rejects_unsupported_feature(tmp_path: Path) -> None:
         assert False, "Expected ValueError for unsupported feature"
     except ValueError as exc:
         assert "features no soportadas" in str(exc)
+
+
+def test_query_supports_registered_preset(tmp_path: Path) -> None:
+    db_path = tmp_path / "onpe_denorm.db"
+    _seed_denorm_like_db(db_path)
+    engine = AnalyticsEngine(db_path)
+
+    out = engine.query(
+        {
+            "preset": "900k_segunda_vuelta_resumen",
+            "select": ["codigo_mesa", "partido_id", "votos"],
+            "limit": 10,
+        }
+    )
+
+    assert out["query_echo"]["preset"] == "900k_segunda_vuelta_resumen"
+    assert out["schema_version"] == "1.0"
+    assert out["returned"] >= 1
+
+
+def test_search_entities_returns_geo_and_party_candidates(tmp_path: Path) -> None:
+    db_path = tmp_path / "onpe_denorm.db"
+    _seed_denorm_like_db(db_path)
+    engine = AnalyticsEngine(db_path)
+
+    out = engine.search_entities(
+        query="lima",
+        field="any",
+        election_year=2026,
+        vuelta=2,
+        limit=10,
+    )
+
+    assert out["returned"] >= 1
+    assert any(item["type"] in {"departamento", "provincia", "distrito", "partido"} for item in out["matches"])
+
+
+def test_query_parses_boolean_strings_safely(tmp_path: Path) -> None:
+    db_path = tmp_path / "onpe_denorm.db"
+    _seed_denorm_like_db(db_path)
+    engine = AnalyticsEngine(db_path)
+
+    out = engine.query(
+        {
+            "dataset": "mesa",
+            "election_year": 2026,
+            "vuelta": 2,
+            "select": ["codigo_mesa", "is_contabilizada"],
+            "count_only_contabilizadas": "false",
+            "limit": 10,
+        }
+    )
+    assert out["total"] == 3
+
+
+def test_query_rejects_malformed_where_entries(tmp_path: Path) -> None:
+    db_path = tmp_path / "onpe_denorm.db"
+    _seed_denorm_like_db(db_path)
+    engine = AnalyticsEngine(db_path)
+
+    try:
+        engine.query(
+            {
+                "dataset": "mesa",
+                "election_year": 2026,
+                "vuelta": 2,
+                "select": ["codigo_mesa", "votos"],
+                "where": ["invalid"],
+            }
+        )
+        assert False, "Expected ValueError for malformed where"
+    except ValueError as exc:
+        assert "where" in str(exc)
