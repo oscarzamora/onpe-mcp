@@ -310,6 +310,20 @@ python scripts/benchmark_denorm.py            # corre 26 queries baseline legacy
 | `db_search` | Descubre entidades canónicas (geo/partido/candidato) para alimentar `db_query` sin depender de SQL ad hoc. |
 | `db_batch_execute` | Ejecuta lote de consultas `db_query` con límites y `stop_on_error` para orquestación controlada. |
 
+**Disciplina recomendada para agentes (MCP-only):**
+
+1. Para analítica, usar `db_query` (no SQL directo).
+2. Para ambigüedad de entidades, usar `db_search` antes de `db_query`.
+3. Para múltiples consultas relacionadas, usar `db_batch_execute`.
+4. Reportar `query_meta` (`query_id`, `snapshot_id`, `normalized_request_hash`) en análisis sensibles.
+
+**Mapeo legacy → contrato `db_query` (dataset `mesa`):**
+
+- `codigo_estado_acta` → `estado_acta`
+- `contabilizada` / `es_contabilizada` → `is_contabilizada`
+
+> `onpe_query` y `onpe_filter_mesas` se mantienen por compatibilidad. Para nuevos flujos, preferir `db_query`.
+
 ### Bootstrap y sincronización
 
 | Tool | Descripción |

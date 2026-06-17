@@ -40,6 +40,14 @@ Objetivo práctico: que agentes/consumidores usen una puerta analítica MCP read
 - Ejecuta batches de requests `db_query` en modo read-only.
 - Límite de seguridad: máximo 50 requests por llamada.
 - Soporta `stop_on_error` para control operacional.
+- Aplica límites de seguridad por lote para evitar respuestas masivas.
+
+### Mapeo de campos legacy (guía de compatibilidad)
+
+En `db_query` (dataset `mesa`) usar nombres canónicos:
+
+- `estado_acta` (equivale a `codigo_estado_acta` legacy)
+- `is_contabilizada` (equivale a `contabilizada` / `es_contabilizada`)
 
 ---
 
@@ -72,6 +80,20 @@ Esto permite replay y comparación entre ejecuciones.
 - `db_query` es la puerta recomendada para nuevos flujos analíticos.
 - `db_search` se usa para resolver entidades antes de consultar.
 - `db_batch_execute` queda para orquestación controlada de múltiples consultas.
+
+### Tool guidance (copiable para prompt de agentes)
+
+```md
+## Disciplina de acceso a datos (obligatoria)
+
+1. Para analítica electoral usa solo tools MCP.
+2. La tool principal es `db_query`.
+3. No uses SQL directo ni dependas de tablas físicas internas.
+4. Para ambigüedad, usa `db_search` antes de `db_query`.
+5. Para estado de acta usa `estado_acta` o `is_contabilizada`.
+6. Si una consulta falla por campo legacy, remapea a nombre canónico y reintenta por MCP.
+7. Reporta `query_meta` (`query_id`, `snapshot_id`, `normalized_request_hash`) en análisis sensibles.
+```
 
 ---
 
