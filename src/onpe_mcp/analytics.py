@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import copy
+import re
 import sqlite3
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -103,6 +105,18 @@ _FIELD_ALIASES = {
 }
 
 
+_AGG_RE = re.compile(
+    r"^(?P<fn>sum|count|min|max|avg)\((?P<field>\*|[a-zA-Z_][a-zA-Z0-9_]*)\)(?:\s+as\s+(?P<alias>[a-zA-Z_][a-zA-Z0-9_]*))?$",
+    flags=re.IGNORECASE,
+)
+
+
+def _normalize_text(value: str) -> str:
+    raw = unicodedata.normalize("NFKD", str(value or ""))
+    no_marks = "".join(ch for ch in raw if not unicodedata.combining(ch))
+    return no_marks.casefold().strip()
+
+
 def _parse_bool(value: Any, *, field_name: str, default: bool) -> bool:
     if value is None:
         return default
@@ -125,6 +139,7 @@ class QuerySpec:
     select: list[str]
     where: list[dict[str, Any]]
     order_by: list[dict[str, str]]
+    group_by: list[str]
     limit: int
     offset: int
     include_special: bool
@@ -159,6 +174,10 @@ class QuerySpec:
         if any(not isinstance(item, dict) for item in order_by):
             raise ValueError("cada elemento de order_by debe ser un objeto")
 
+        group_by = [str(s).strip() for s in payload.get("group_by", []) if str(s).strip()]
+        if not isinstance(payload.get("group_by", []), list):
+            raise ValueError("group_by debe ser una lista")
+
         limit = max(1, min(int(payload.get("limit", 500)), 50_000))
         offset = max(0, int(payload.get("offset", 0)))
         include_special = _parse_bool(
@@ -172,11 +191,11 @@ class QuerySpec:
             default=True,
         )
 
-        unsupported = [k for k in ("group_by", "having", "compare") if payload.get(k)]
+        unsupported = [k for k in ("having", "compare") if payload.get(k)]
         if unsupported:
             raise ValueError(
                 f"features no soportadas aún: {', '.join(unsupported)}. "
-                "Use selección + where + order_by + paginación."
+                "Use selección + where + group_by + order_by + paginación."
             )
 
         return cls(
@@ -186,6 +205,7 @@ class QuerySpec:
             select=select,
             where=where,
             order_by=order_by,
+            group_by=group_by,
             limit=limit,
             offset=offset,
             include_special=include_special,
@@ -226,6 +246,54 @@ class AnalyticsEngine:
         invalid = [c for c in cols if c not in allowed]
         if invalid:
             raise ValueError(f"columnas no permitidas para {table}: {invalid}")
+
+    def _compile_select(
+        self,
+        *,
+        spec: QuerySpec,
+        allowed: set[str],
+        table: str,
+    ) -> tuple[list[str], dict[str, str]]:
+        aliases: dict[str, str] = {}
+        sql_cols: list[str] = []
+        used_aliases: set[str] = set()
+
+        for idx, item in enumerate(spec.select):
+            term = str(item or "").strip()
+            if not term:
+                continue
+
+            m = _AGG_RE.match(term)
+            if m:
+                fn = str(m.group("fn") or "").upper()
+                field = str(m.group("field") or "").strip()
+                alias = str(m.group("alias") or f"{fn.lower()}_{field.lower()}").strip()
+                if alias in used_aliases:
+                    raise ValueError(f"alias repetido en select: {alias}")
+
+                if field != "*" and field not in allowed:
+                    raise ValueError(f"columna no permitida en agregado para {table}: {field}")
+                if field == "*" and fn != "COUNT":
+                    raise ValueError("solo COUNT(*) está permitido con *")
+
+                expr = f"{fn}({field})" if field == "*" else f"{fn}({field})"
+                sql_cols.append(f"{expr} AS {alias}")
+                aliases[alias] = "aggregate"
+                used_aliases.add(alias)
+                continue
+
+            if term not in allowed:
+                raise ValueError(f"columnas no permitidas para {table}: ['{term}']")
+            if term in used_aliases:
+                continue
+            sql_cols.append(term)
+            aliases[term] = "column"
+            used_aliases.add(term)
+
+        if not sql_cols:
+            raise ValueError("select no puede quedar vacío")
+
+        return sql_cols, aliases
 
     def _compile_where(
         self,
@@ -357,7 +425,11 @@ class AnalyticsEngine:
         table = _DATASET_TABLE[spec.dataset]
         allowed = self._allowed_columns(spec.dataset, table)
 
-        self._validate_columns(allowed, spec.select, table)
+        group_by_cols = [str(c).strip() for c in spec.group_by]
+        if group_by_cols:
+            self._validate_columns(allowed, group_by_cols, table)
+
+        select_sql_cols, select_alias_kind = self._compile_select(spec=spec, allowed=allowed, table=table)
         where_sql, params = self._compile_where(allowed, spec)
 
         order_sql = ""
@@ -366,17 +438,29 @@ class AnalyticsEngine:
             for it in spec.order_by:
                 field = str(it.get("field", "")).strip()
                 direction = str(it.get("dir", "asc")).strip().lower()
-                if field not in allowed:
+                if field not in allowed and field not in select_alias_kind:
                     raise ValueError(f"order_by.field no permitido: {field}")
                 if direction not in ("asc", "desc"):
                     raise ValueError(f"order_by.dir inválido: {direction}")
                 pieces.append(f"{field} {direction.upper()}")
             order_sql = " ORDER BY " + ", ".join(pieces)
 
-        select_sql = ", ".join(spec.select)
+        if group_by_cols:
+            group_set = set(group_by_cols)
+            for sel_alias, kind in select_alias_kind.items():
+                if kind == "column" and sel_alias not in group_set:
+                    raise ValueError(
+                        f"select column '{sel_alias}' debe estar en group_by o ser agregado"
+                    )
+
+        select_sql = ", ".join(select_sql_cols)
         base_sql = f" FROM {table} WHERE {where_sql}"
-        rows_sql = f"SELECT {select_sql}{base_sql}{order_sql} LIMIT ? OFFSET ?"
-        count_sql = f"SELECT COUNT(*) AS c{base_sql}"
+        group_sql = f" GROUP BY {', '.join(group_by_cols)}" if group_by_cols else ""
+        rows_sql = f"SELECT {select_sql}{base_sql}{group_sql}{order_sql} LIMIT ? OFFSET ?"
+        if group_by_cols:
+            count_sql = f"SELECT COUNT(*) AS c FROM (SELECT 1{base_sql}{group_sql}) _g"
+        else:
+            count_sql = f"SELECT COUNT(*) AS c{base_sql}"
 
         with self._connect() as conn:
             total = int(conn.execute(count_sql, params).fetchone()["c"])
@@ -400,6 +484,7 @@ class AnalyticsEngine:
                 "select": spec.select,
                 "where": spec.where,
                 "order_by": spec.order_by,
+                "group_by": spec.group_by,
                 "include_special": spec.include_special,
                 "count_only_contabilizadas": spec.count_only_contabilizadas,
                 "preset": effective_payload.get("preset"),
@@ -453,14 +538,16 @@ class AnalyticsEngine:
                     WHERE election_year = ?
                       AND vuelta = ?
                       AND COALESCE({col}, '') != ''
-                      AND UPPER({col}) LIKE UPPER(?)
                     ORDER BY value
-                    LIMIT ?
+                    LIMIT 5000
                 """
-                rows = conn.execute(sql, (int(election_year), int(vuelta), f"%{term}%", per_type_limit)).fetchall()
+                rows = conn.execute(sql, (int(election_year), int(vuelta))).fetchall()
+                term_norm = _normalize_text(term)
                 for row in rows:
                     value = str(row["value"] or "").strip()
                     if not value:
+                        continue
+                    if term_norm not in _normalize_text(value):
                         continue
                     key = (entity_type, value.casefold())
                     if key in seen:
